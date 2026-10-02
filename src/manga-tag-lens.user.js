@@ -2,7 +2,7 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.8
+// @version      0.2.9
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  记下要找的标签，在当前页把对上的漫画亮出来。本页没有的标签也会保存，换页后继续对。不分大小写，简体繁体视为同一个。
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.8';
+  const VERSION = '0.2.9';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -287,9 +287,13 @@
     return state.items.length > 0;
   }
 
-  /** 卡片外面那一格（整列里能挪动的那块）。轮播不挪，避免把站点的滑动轨道拆开。 */
+  /** 卡片外面那一格。轮播里挪的是整张幻灯片，不拆轨道里的内容。 */
   function gridCell(el) {
-    if (el.closest && el.closest('.owl-carousel, .owl-stage')) return null;
+    const slide = el.closest && el.closest('.owl-item, .slick-slide, .swiper-slide');
+    if (slide) {
+      if (slide.classList.contains('cloned') || slide.classList.contains('slick-cloned')) return null;
+      return slide;
+    }
     let node = el;
     while (node.parentElement && node.parentElement !== document.body) {
       const parent = node.parentElement;
@@ -393,6 +397,8 @@
 
   /** parent -> 排位前的子节点顺序，清空时按这个放回去 */
   const layoutSnap = new Map();
+  /** 轮播轨道原来的位移，清空时放回去 */
+  const trackSnap = new Map();
 
   function restoreOrder() {
     layoutSnap.forEach((children, parent) => {
@@ -401,7 +407,34 @@
         if (node) parent.appendChild(node);
       });
     });
+    trackSnap.forEach((prev, parent) => {
+      if (!parent || !parent.isConnected) return;
+      parent.style.transform = prev.transform;
+      parent.style.transition = prev.transition;
+    });
     layoutSnap.clear();
+    trackSnap.clear();
+  }
+
+  function settleTrack(parent) {
+    if (!parent || !parent.classList) return;
+    const track = parent.classList.contains('owl-stage')
+      || parent.classList.contains('swiper-wrapper')
+      || parent.classList.contains('slick-track');
+    if (!track) return;
+    if (!trackSnap.has(parent)) {
+      trackSnap.set(parent, {
+        transform: parent.style.transform || '',
+        transition: parent.style.transition || '',
+      });
+    }
+    parent.style.transition = 'none';
+    parent.style.transform = 'none';
+    Array.from(parent.children).forEach((node) => {
+      if (node.classList && (node.classList.contains('cloned') || node.classList.contains('slick-cloned'))) {
+        parent.appendChild(node);
+      }
+    });
   }
 
   function reorderHits() {
@@ -427,6 +460,7 @@
         else rest.push(node);
       });
       hits.concat(rest).forEach((node) => parent.appendChild(node));
+      settleTrack(parent);
     });
   }
 
