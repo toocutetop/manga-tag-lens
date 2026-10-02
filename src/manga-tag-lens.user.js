@@ -2,7 +2,7 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.21
+// @version      0.2.22
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  记下要找的标签，在当前页把对上的漫画亮出来。本页没有的标签也会保存，换页后继续对。不分大小写，简体繁体视为同一个。
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.21';
+  const VERSION = '0.2.22';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -672,14 +672,16 @@
   }
 
   const RING_OFF = 2;
-  const RING_LINE = 1.5;
-  const RING_LINE_FOCUS = 2;
+  const RING_LINE = 2.5;
+  const RING_LINE_FOCUS = 2.5;
+  const RING_GLOW = 8;
   const RING_SLACK = 1;
 
   function clearHaloFit() {
     qsa(document, '[data-mtl-cover]').forEach((el) => {
       el.style.removeProperty('--mtl-off');
       el.style.removeProperty('--mtl-line');
+      el.style.removeProperty('--mtl-glow');
     });
   }
 
@@ -687,8 +689,13 @@
     return it.el && it.el.getAttribute('data-mtl-focus') === '1' ? RING_LINE_FOCUS : RING_LINE;
   }
 
-  /** 圈画在封面外面。两本都亮时，两边的圈都要吃进官方空隙；
-   *  空隙不够就收 offset，绝不给封面加 padding，否则会比旁边的小一圈。 */
+  function haloNeed(cover, off, line, glow) {
+    const g = (glow.get(cover) || 0) + 1;
+    return Math.max((off.get(cover) || 0) + (line.get(cover) || 0), g);
+  }
+
+  /** 圈画在封面外面，带一圈暖色发光。两本都亮时，两边的圈都要吃进官方空隙；
+   *  空隙不够先收发光再收外扩，绝不给封面加 padding。 */
   function applyHaloFit() {
     clearHaloFit();
     if (!picks.length) return;
@@ -705,14 +712,20 @@
 
     const off = new Map();
     const line = new Map();
+    const glow = new Map();
     recs.forEach((x) => {
       if (!x.hit) return;
       off.set(x.cover, RING_OFF);
       line.set(x.cover, ringLine(x.it));
+      glow.set(x.cover, RING_GLOW);
     });
 
     function cap(cover, budget) {
       if (!off.has(cover)) return;
+      if ((glow.get(cover) || 0) + 1 > budget) {
+        glow.set(cover, Math.max(0, budget - 1));
+      }
+      if (haloNeed(cover, off, line, glow) <= budget) return;
       const maxOff = Math.max(0, budget - line.get(cover));
       if (maxOff < off.get(cover)) off.set(cover, maxOff);
     }
@@ -720,8 +733,8 @@
     function meet(a, b, gap) {
       if (!(a.hit || b.hit)) return;
       if (!(gap >= 0) || gap > 120) return;
-      const aNeed = a.hit ? off.get(a.cover) + line.get(a.cover) : 0;
-      const bNeed = b.hit ? off.get(b.cover) + line.get(b.cover) : 0;
+      const aNeed = a.hit ? haloNeed(a.cover, off, line, glow) : 0;
+      const bNeed = b.hit ? haloNeed(b.cover, off, line, glow) : 0;
       if (aNeed + bNeed + RING_SLACK <= gap) return;
       const n = (a.hit ? 1 : 0) + (b.hit ? 1 : 0);
       const budget = (gap - RING_SLACK) / n;
@@ -761,6 +774,7 @@
       if (!x.hit) return;
       x.cover.style.setProperty('--mtl-off', off.get(x.cover).toFixed(2) + 'px');
       x.cover.style.setProperty('--mtl-line', line.get(x.cover) + 'px');
+      x.cover.style.setProperty('--mtl-glow', glow.get(x.cover).toFixed(2) + 'px');
     });
   }
 
@@ -1405,7 +1419,9 @@
       inset 0 -20px 26px -20px rgba(38,50,70,.2);
     background:
       linear-gradient(155deg, rgba(255,255,255,.22), rgba(255,255,255,0) 18%),
-      linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,0) 12%);
+      linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,0) 12%),
+      /* 底下加薄薄一层，字和按钮才看得清；别铺满，否则又变成白膜。 */
+      linear-gradient(180deg, rgba(255,255,255,0) 50%, rgba(255,250,244,.2) 82%, rgba(255,248,240,.3));
   }
   .hd, .body {
     position: relative; z-index: 3;
@@ -1642,20 +1658,26 @@
   /* 高亮只画在封面 .thumb-overlay 上。
    * 不要给整格或封面写 padding / margin / width / height / border-radius：
    * 封面是 100% 宽 + 官方 3/4，父级一加内边距就会比旁边没高亮的小一圈。
-   * 圈默认外扩 2px。两本都亮时 JS 按官方空隙收 --mtl-off，避免圈和圈叠在一起。
-   * 外发光会铺到隔壁，所以不用。 */
+   * 金色发光圈。两本都亮时 JS 按官方空隙先收发光再收外扩，避免圈和圈叠在一起。 */
   [data-mtl-cover] {
-    outline: var(--mtl-line, 1.5px) solid rgba(255,255,255,.92) !important;
+    outline-width: var(--mtl-line, 2.5px) !important;
+    outline-style: solid !important;
+    outline-color: rgba(255, 208, 74, .98) !important;
     outline-offset: var(--mtl-off, 2px) !important;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.5) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.5),
+      0 0 var(--mtl-glow, 8px) 1px rgba(255, 168, 36, .72) !important;
   }
   /* 当前看的那一本换成冷色。角标挂在封面上，封面自己是 relative。 */
   [data-mtl-focus="1"] [data-mtl-cover],
   [data-mtl-focus="1"][data-mtl-cover] {
-    outline-color: #fff !important;
-    outline-width: var(--mtl-line, 2px) !important;
+    outline-color: rgba(255,255,255,.98) !important;
+    outline-style: solid !important;
+    outline-width: var(--mtl-line, 2.5px) !important;
     outline-offset: var(--mtl-off, 2px) !important;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.68) !important;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.68),
+      0 0 var(--mtl-glow, 8px) 1px rgba(80, 190, 255, .7) !important;
     z-index: 4;
   }
   .mtl-focus-badge {
