@@ -2,7 +2,7 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.10
+// @version      0.2.11
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  记下要找的标签，在当前页把对上的漫画亮出来。本页没有的标签也会保存，换页后继续对。不分大小写，简体繁体视为同一个。
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.10';
+  const VERSION = '0.2.11';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -1016,25 +1016,43 @@
 
   const PAGE_CSS = `
   [data-mtl="hit"] {
-    border-radius: 16px !important;
+    margin: 10px 8px 14px !important;
+    padding: 8px 8px 12px !important;
+    border-radius: 18px !important;
     outline: 1px solid rgba(255,255,255,.95) !important;
-    outline-offset: 4px !important;
+    outline-offset: 3px !important;
     box-shadow:
       inset 0 1px 0 rgba(255,255,255,.7),
       inset 0 0 22px rgba(255, 176, 64, .28),
       0 0 0 1px rgba(255, 196, 110, .9),
-      0 0 0 6px rgba(255, 160, 48, .32),
-      0 0 24px rgba(255, 150, 40, .48) !important;
+      0 0 0 4px rgba(255, 160, 48, .28),
+      0 0 16px rgba(255, 150, 40, .36) !important;
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+  }
+  /* 禁漫的标签行是单行裁切。胶囊变高后会被从中间切开，这里把这一行撑开。 */
+  [data-mtl="hit"] .title-truncate.tags,
+  [data-mtl="hit"] :has(> a.tag),
+  [data-mtl="hit"] :has(> [data-mtl-tag="1"]) {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+    white-space: normal !important;
+    text-overflow: clip !important;
+    line-height: 1 !important;
+    margin-top: 6px !important;
+    padding-bottom: 2px !important;
   }
   [data-mtl-focus="1"] {
     outline: 1.5px solid #fff !important;
-    outline-offset: 6px !important;
+    outline-offset: 4px !important;
     box-shadow:
       inset 0 1px 0 rgba(255,255,255,.85),
       inset 0 0 26px rgba(120, 210, 255, .38),
       0 0 0 1px rgba(170, 230, 255, .95),
-      0 0 0 8px rgba(90, 190, 255, .34),
-      0 0 32px rgba(80, 180, 255, .62) !important;
+      0 0 0 5px rgba(90, 190, 255, .3),
+      0 0 18px rgba(80, 180, 255, .45) !important;
     position: relative !important;
     z-index: 4 !important;
   }
@@ -1058,11 +1076,22 @@
     opacity: 0.4 !important;
     filter: saturate(.72) !important;
   }
+  [data-mtl="hit"] a.tag,
+  [data-mtl-tag="1"] {
+    display: inline-block !important;
+    box-sizing: border-box !important;
+    margin: 4px 6px 4px 0 !important;
+    padding: 0 8px !important;
+    line-height: 22px !important;
+    height: 22px !important;
+    vertical-align: middle !important;
+  }
   [data-mtl-tag="1"] {
     background: linear-gradient(180deg, rgba(255,255,255,.88), rgba(255, 196, 110, .62)) !important;
     color: #3a2408 !important;
     border-radius: 999px !important;
-    box-shadow: inset 0 1px 0 #fff, 0 0 0 1px rgba(255, 190, 90, .7), 0 2px 10px rgba(255, 150, 40, .35) !important;
+    padding: 0 10px !important;
+    box-shadow: inset 0 1px 0 #fff, 0 0 0 1px rgba(255, 190, 90, .7), 0 2px 6px rgba(255, 150, 40, .28) !important;
     font-weight: 650 !important;
     text-decoration: none !important;
   }
