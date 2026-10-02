@@ -2,10 +2,10 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.3
+// @version      0.2.4
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
-// @description  手动输入多个标签，在当前页把对上的漫画和标签亮出来。不分大小写，简体繁体视为同一个，可选「同时要」或「有一个就行」。
+// @description  记下要找的标签，在当前页把对上的漫画亮出来。本页没有的标签也会保存，换页后继续对。不分大小写，简体繁体视为同一个。
 // @description:en  Type tags to highlight matching comics on the current page. Case-insensitive, simplified and traditional Chinese match, with AND / OR.
 // @author       you
 // @match        *://*/*
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.3';
+  const VERSION = '0.2.4';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -205,6 +205,7 @@
     total: 0,
     matched: 0,
     hint: '',
+    hintKind: '',
     cursor: -1,
   };
 
@@ -310,10 +311,15 @@
     return 3;
   }
 
-  /** 输入框对得上的标签排到前面；没在打字时，已选的排前面 */
+  /** 本页标签，加上已经记下、但这页还没出现的词 */
   function orderedTags() {
     const q = norm(state.keyword);
     const list = Array.from(state.tagIndex.values());
+    const seen = new Set(list.map((t) => t.key));
+    picks.forEach((key) => {
+      if (seen.has(key)) return;
+      list.push({ key, label: labelOf(key), count: 0, away: true });
+    });
     list.sort((a, b) => {
       const ra = rank(a.key, q);
       const rb = rank(b.key, q);
@@ -362,10 +368,12 @@
     saveSettings(settings);
   }
 
-  function addPick(key) {
+  function addPick(key, label) {
     if (!picks.includes(key)) picks.push(key);
     const rec = state.tagIndex.get(key);
     if (rec) pickLabels.set(key, rec.label);
+    else if (label) pickLabels.set(key, label);
+    else if (!pickLabels.has(key)) pickLabels.set(key, key);
     state.cursor = -1;
     persistPicks();
   }
@@ -489,6 +497,7 @@
     picks = [];
     state.keyword = '';
     state.hint = '';
+    state.hintKind = '';
     state.cursor = -1;
     if (ui.kwInput) ui.kwInput.value = '';
     persistPicks();
@@ -511,41 +520,68 @@
       addPick(found.key);
       return 'added';
     }
-    return found.type;
+    if (found.type === 'many') return 'many';
+    if (found.type === 'empty') return 'empty';
+    const tag = parseTag(token);
+    if (!tag) return 'none';
+    addPick(tag.key, tag.label);
+    return 'saved';
   }
 
   function commitQuery() {
     const token = cleanLabel(state.keyword);
     if (!token) return;
     const result = commitToken(token);
-    if (result === 'added') {
+    const kept = result === 'added' || result === 'saved';
+    if (kept) {
       state.keyword = '';
-      state.hint = '';
       if (ui.kwInput) ui.kwInput.value = '';
+      if (result === 'saved') {
+        state.hint = '已记下。这一页还没有，之后遇到会对上';
+        state.hintKind = 'note';
+      } else {
+        state.hint = '';
+        state.hintKind = '';
+      }
     } else if (result === 'many') {
-      state.hint = '有多个相近的，点一个，或继续打完';
+      state.hint = '有多个相近的，点一个，或把词打完整。本页没有的词回车也会记下';
+      state.hintKind = 'warn';
     } else if (result === 'none') {
-      state.hint = '本页没有这个标签';
+      state.hint = '这个词太长了';
+      state.hintKind = 'warn';
     }
-    renderPanel({ keepScroll: result !== 'added' });
-    if (result === 'added') applyHighlight();
+    renderPanel({ keepScroll: !kept });
+    if (kept) applyHighlight();
   }
 
   function addFromText(text) {
     const parts = String(text).split(/[\s,，;；、\n]+/).map(cleanLabel).filter(Boolean);
     const left = [];
     let added = 0;
+    let saved = 0;
     parts.forEach((part) => {
-      if (commitToken(part) === 'added') added++;
+      const result = commitToken(part);
+      if (result === 'added') added++;
+      else if (result === 'saved') saved++;
       else left.push(part);
     });
     state.keyword = left.join(' ');
     if (ui.kwInput) ui.kwInput.value = state.keyword;
-    if (!left.length) state.hint = '';
-    else if (!added) state.hint = '这些词本页没有';
-    else state.hint = '没对上的还留在输入框里';
+    if (!left.length && saved) {
+      state.hint = '已记下。这一页没有的，换页后会对上';
+      state.hintKind = 'note';
+    } else if (!left.length) {
+      state.hint = '';
+      state.hintKind = '';
+    } else if (!added && !saved) {
+      state.hint = '这些词还没写完整，或太长';
+      state.hintKind = 'warn';
+    } else {
+      state.hint = '没对上的还留在输入框里';
+      state.hintKind = 'warn';
+    }
     renderPanel();
-    if (added) applyHighlight();
+    if (added || saved) applyHighlight();
   }
 
   function restorePicks() {
@@ -565,6 +601,164 @@
 
   let ui = {};
 
+  const GLASS_SURFACE = (x) => Math.pow(1 - Math.pow(1 - x, 4), 0.25);
+
+  function glassProfile(thickness, bezel, ior) {
+    const samples = 128;
+    const eta = 1 / ior;
+    const profile = new Float64Array(samples);
+    for (let i = 0; i < samples; i++) {
+      const x = i / samples;
+      const y = GLASS_SURFACE(x);
+      const dx = x < 1 ? 0.0001 : -0.0001;
+      const deriv = (GLASS_SURFACE(x + dx) - y) / dx;
+      const mag = Math.sqrt(deriv * deriv + 1);
+      const nx = -deriv / mag;
+      const ny = -1 / mag;
+      const dot = ny;
+      const k = 1 - eta * eta * (1 - dot * dot);
+      if (k < 0) continue;
+      const sq = Math.sqrt(k);
+      const ry = eta - (eta * dot + sq) * ny;
+      if (!ry) continue;
+      profile[i] = (-(eta * dot + sq) * nx) * ((y * bezel + thickness) / ry);
+    }
+    return profile;
+  }
+
+  function glassMap(w, h, radius, bezel, paint) {
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const ctx = c.getContext('2d');
+    const img = ctx.createImageData(w, h);
+    paint(img.data, w, h, radius, bezel);
+    ctx.putImageData(img, 0, 0);
+    return c.toDataURL();
+  }
+
+  function buildGlassFilter(w, h) {
+    let mapW = w;
+    let mapH = h;
+    const maxPixels = 280 * 360;
+    if (mapW * mapH > maxPixels) {
+      const k = Math.sqrt(maxPixels / (mapW * mapH));
+      mapW = Math.max(8, Math.round(mapW * k));
+      mapH = Math.max(8, Math.round(mapH * k));
+    }
+    const radius = Math.min(Math.max(12, Math.round(32 * mapW / w)), Math.floor(Math.min(mapW, mapH) / 2) - 1);
+    const bezel = Math.max(6, Math.min(Math.round(20 * mapW / w), radius - 1));
+    const profile = glassProfile(40, bezel, 1.8);
+    let maxDisp = 1;
+    for (let i = 0; i < profile.length; i++) maxDisp = Math.max(maxDisp, Math.abs(profile[i]));
+    const dispUrl = glassMap(mapW, mapH, radius, bezel, (d, W, H, r, bz) => {
+      for (let i = 0; i < d.length; i += 4) {
+        d[i] = 128; d[i + 1] = 128; d[i + 2] = 0; d[i + 3] = 255;
+      }
+      const rSq = r * r;
+      const r1Sq = (r + 1) * (r + 1);
+      const rBSq = Math.max(r - bz, 0) ** 2;
+      const wB = W - r * 2;
+      const hB = H - r * 2;
+      const S = profile.length;
+      for (let y1 = 0; y1 < H; y1++) {
+        for (let x1 = 0; x1 < W; x1++) {
+          const x = x1 < r ? x1 - r : x1 >= W - r ? x1 - r - wB : 0;
+          const y = y1 < r ? y1 - r : y1 >= H - r ? y1 - r - hB : 0;
+          const dSq = x * x + y * y;
+          if (dSq > r1Sq || dSq < rBSq || dSq === 0) continue;
+          const dist = Math.sqrt(dSq);
+          const fromSide = r - dist;
+          const op = dSq < rSq ? 1 : 1 - (dist - Math.sqrt(rSq)) / (Math.sqrt(r1Sq) - Math.sqrt(rSq));
+          if (op <= 0) continue;
+          const bi = Math.min(((fromSide / bz) * S) | 0, S - 1);
+          const disp = profile[bi] || 0;
+          const idx = (y1 * W + x1) * 4;
+          d[idx] = Math.max(0, Math.min(255, (128 + ((-x / dist) * disp) / maxDisp * 127 * op + 0.5) | 0));
+          d[idx + 1] = Math.max(0, Math.min(255, (128 + ((-y / dist) * disp) / maxDisp * 127 * op + 0.5) | 0));
+        }
+      }
+    });
+    const specUrl = glassMap(mapW, mapH, radius, Math.min(bezel * 2.5, radius), (d, W, H, r, bz) => {
+      d.fill(0);
+      const rSq = r * r;
+      const r1Sq = (r + 1) * (r + 1);
+      const rBSq = Math.max(r - bz, 0) ** 2;
+      const wB = W - r * 2;
+      const hB = H - r * 2;
+      const svx = Math.cos(Math.PI / 3);
+      const svy = Math.sin(Math.PI / 3);
+      for (let y1 = 0; y1 < H; y1++) {
+        for (let x1 = 0; x1 < W; x1++) {
+          const x = x1 < r ? x1 - r : x1 >= W - r ? x1 - r - wB : 0;
+          const y = y1 < r ? y1 - r : y1 >= H - r ? y1 - r - hB : 0;
+          const dSq = x * x + y * y;
+          if (dSq > r1Sq || dSq < rBSq || dSq === 0) continue;
+          const dist = Math.sqrt(dSq);
+          const fromSide = r - dist;
+          const op = dSq < rSq ? 1 : 1 - (dist - Math.sqrt(rSq)) / (Math.sqrt(r1Sq) - Math.sqrt(rSq));
+          if (op <= 0) continue;
+          const dot = Math.abs((x / dist) * svx + (-y / dist) * svy);
+          const edge = Math.sqrt(Math.max(0, 1 - (1 - fromSide) ** 2));
+          const coeff = dot * edge;
+          const col = (255 * coeff) | 0;
+          const idx = (y1 * W + x1) * 4;
+          d[idx] = col;
+          d[idx + 1] = col;
+          d[idx + 2] = col;
+          d[idx + 3] = (col * coeff * op) | 0;
+        }
+      }
+    });
+    const scale = maxDisp * 0.9;
+    return `<filter id="mtl-lg" x="0%" y="0%" width="100%" height="100%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="1.4" result="blurred_source"/>
+      <feImage href="${dispUrl}" x="0" y="0" width="${w}" height="${h}" result="disp_map"/>
+      <feDisplacementMap in="blurred_source" in2="disp_map" scale="${scale}" xChannelSelector="R" yChannelSelector="G" result="displaced"/>
+      <feColorMatrix in="displaced" type="saturate" values="3" result="displaced_sat"/>
+      <feImage href="${specUrl}" x="0" y="0" width="${w}" height="${h}" result="spec_layer"/>
+      <feComposite in="displaced_sat" in2="spec_layer" operator="in" result="spec_masked"/>
+      <feComponentTransfer in="spec_layer" result="spec_faded">
+        <feFuncA type="linear" slope="0.5"/>
+      </feComponentTransfer>
+      <feBlend in="spec_masked" in2="displaced" mode="normal" result="with_sat"/>
+      <feBlend in="spec_faded" in2="with_sat" mode="normal"/>
+    </filter>`;
+  }
+
+  function mountGlass(root, plate) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', '0');
+    svg.setAttribute('height', '0');
+    svg.setAttribute('color-interpolation-filters', 'sRGB');
+    svg.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;pointer-events:none';
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    svg.appendChild(defs);
+    root.appendChild(svg);
+    let timer = 0;
+    let last = '';
+    const rebuild = () => {
+      const w = Math.round(plate.offsetWidth);
+      const h = Math.round(plate.offsetHeight);
+      if (w < 8 || h < 8) return;
+      const key = w + 'x' + h;
+      if (key === last) return;
+      last = key;
+      try {
+        defs.innerHTML = buildGlassFilter(w, h);
+        plate.classList.add('refract');
+      } catch (e) {
+        plate.classList.remove('refract');
+      }
+    };
+    const schedule = () => {
+      clearTimeout(timer);
+      timer = setTimeout(rebuild, 80);
+    };
+    if (typeof ResizeObserver === 'function') new ResizeObserver(schedule).observe(plate);
+    requestAnimationFrame(rebuild);
+  }
+
   const CSS = `
   :host { all: initial; }
   * { box-sizing: border-box; }
@@ -574,108 +768,139 @@
     width: min(336px, calc(100vw - 24px));
     max-height: calc(100vh - 32px);
     display: flex; flex-direction: column;
-    background: #12141a; color: #f6f3ec;
-    border: 1px solid rgba(255,255,255,.08);
-    border-radius: 18px;
-    box-shadow: 0 18px 50px rgba(0,0,0,.38);
-    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+    color: #1c1915;
+    border-radius: 32px;
+    box-shadow: 0 4px 24px rgba(0,0,0,.18);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
     font-size: 13px; line-height: 1.45;
     overflow: hidden;
+    isolation: isolate;
   }
+  .plate {
+    position: absolute; inset: 0; z-index: 0; border-radius: inherit; pointer-events: none;
+    background: rgba(255,255,255,.28);
+    box-shadow: inset 0 0 20px -5px rgba(255,255,255,.7);
+    backdrop-filter: blur(18px) saturate(1.5);
+    -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  }
+  .plate.refract {
+    background: rgba(255,255,255,.34);
+    backdrop-filter: url(#mtl-lg);
+    -webkit-backdrop-filter: url(#mtl-lg);
+  }
+  .hd, .body { position: relative; z-index: 1; }
   .hd {
     display: flex; align-items: center; gap: 8px;
-    padding: 14px 12px 6px 16px;
-    cursor: grab; user-select: none;
+    min-height: 56px; padding: 12px 18px;
+    cursor: pointer; user-select: none;
   }
   .hd:active { cursor: grabbing; }
-  .name { font-weight: 600; }
-  .ver { color: #9c968b; font-size: 11px; }
-  .icon-btn {
-    margin-left: auto; width: 28px; height: 28px;
-    border: 0; border-radius: 8px; background: transparent;
-    color: #c9c3b8; cursor: pointer;
+  .name { font-weight: 650; letter-spacing: -0.01em; }
+  .ver, .sum { color: rgba(28,25,21,.55); font-size: 11px; }
+  .sum { display: none; }
+  .chev {
+    margin-left: auto;
+    padding: 4px 10px; border-radius: 999px;
+    background: rgba(255,255,255,.35);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.85), inset 0 -6px 10px rgba(255,255,255,.15);
+    font-size: 12px; font-weight: 650;
   }
-  .icon-btn:hover { background: rgba(255,255,255,.06); }
-  .icon-btn:active { transform: scale(0.96); }
+  .wrap.collapsed .body { display: none; }
+  .wrap.collapsed .ver { display: none; }
+  .wrap.collapsed .sum { display: inline; }
   .body {
-    padding: 6px 12px 14px;
+    padding: 0 16px 16px;
     display: flex; flex-direction: column; gap: 10px;
     overflow: auto;
   }
-  .wrap.collapsed .body { display: none; }
   .seg {
     display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
-    padding: 4px; background: #0c0e13; border-radius: 12px;
+    padding: 4px; border-radius: 16px;
+    background: rgba(255,255,255,.22);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.7), inset 0 0 0 1px rgba(255,255,255,.35);
   }
   .seg button {
-    border: 0; background: transparent; color: #b7b1a6;
-    border-radius: 9px; padding: 8px 8px 7px; cursor: pointer; line-height: 1.2;
+    border: 0; background: transparent; color: rgba(28,25,21,.62);
+    border-radius: 12px; padding: 8px 8px 7px; cursor: pointer; line-height: 1.2;
   }
   .seg button small { display: block; font-size: 10px; letter-spacing: .04em; opacity: .72; }
-  .seg button.on { background: #ffb020; color: #1c1404; font-weight: 600; }
+  .seg button.on {
+    background: rgba(255,255,255,.55); color: #1c1915; font-weight: 650;
+    box-shadow: inset 0 1px 0 #fff, inset 0 -8px 12px rgba(255,255,255,.25), 0 4px 12px rgba(0,0,0,.06);
+  }
   .seg button:active { transform: scale(0.98); }
   .field {
     display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
     min-height: 46px; padding: 8px;
-    background: #0c0e13; border: 1px solid rgba(255,255,255,.08); border-radius: 12px;
-    cursor: text;
+    background: rgba(255,255,255,.2);
+    border-radius: 16px; cursor: text;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.75), inset 0 0 0 1px rgba(255,255,255,.4);
   }
-  .field:focus-within { border-color: rgba(255,176,32,.9); }
+  .field:focus-within { box-shadow: inset 0 1px 0 #fff, inset 0 0 0 1px rgba(255,255,255,.8); }
+  .chip, .tag, .ghost, .jump {
+    background: rgba(255,255,255,.38);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.9), inset 0 -6px 10px rgba(255,255,255,.18), 0 4px 10px rgba(0,0,0,.06);
+  }
   .chip {
     display: inline-flex; align-items: center; gap: 2px; max-width: 100%;
-    padding: 3px 4px 3px 9px; background: #ffb020; color: #1c1404;
-    border-radius: 999px; font-size: 12px; font-weight: 600;
+    padding: 3px 4px 3px 9px; color: #1c1915;
+    border-radius: 999px; font-size: 12px; font-weight: 650;
+  }
+  .chip.away, .tag.away {
+    background: rgba(255,255,255,.14);
+    box-shadow: inset 0 0 0 1px rgba(28,25,21,.28), inset 0 1px 0 rgba(255,255,255,.5);
   }
   .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
   .chip button {
     width: 18px; height: 18px; border: 0; border-radius: 50%;
     background: transparent; cursor: pointer; line-height: 1; padding: 0;
   }
-  .chip button:hover { background: rgba(0,0,0,.12); }
+  .chip button:hover { background: rgba(255,255,255,.45); }
   .field input {
     flex: 1; min-width: 120px; border: 0; outline: none;
-    background: transparent; padding: 4px 2px; font-size: 13px;
+    background: transparent; padding: 4px 2px; font-size: 13px; color: #1c1915;
   }
-  .field input::placeholder { color: #8d877c; }
-  .hint { min-height: 16px; font-size: 11px; color: #a39c90; }
-  .hint.warn { color: #ffb020; }
-  .row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-  .count { color: #b7b1a6; font-size: 12px; }
-  .count b { color: #ffb020; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .field input::placeholder { color: rgba(28,25,21,.45); }
+  .hint { min-height: 16px; font-size: 11px; color: rgba(28,25,21,.55); }
+  .hint.note { color: #1c1915; }
+  .hint.warn { color: #7a4b12; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .count { color: rgba(28,25,21,.62); font-size: 12px; }
+  .count b { color: #1c1915; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .jump {
-    border: 0; background: transparent; color: #ffb020;
-    cursor: pointer; font-size: 12px; padding: 0;
+    border: 0; color: #1c1915;
+    cursor: pointer; font-size: 12px; font-weight: 650;
+    border-radius: 999px; padding: 6px 10px;
   }
-  .jump:disabled { color: #6d675e; cursor: default; }
-  .jump:active:not(:disabled) { transform: scale(0.98); }
+  .jump:disabled { opacity: .4; cursor: default; }
+  .jump:active:not(:disabled), .ghost:active, .tag:active { transform: scale(0.98); }
   .ghost {
-    border: 1px solid rgba(255,255,255,.1); background: transparent; color: #d9d3c8;
-    border-radius: 8px; padding: 4px 8px; cursor: pointer; font-size: 12px;
+    border: 0; color: #1c1915;
+    border-radius: 999px; padding: 6px 10px; cursor: pointer; font-size: 12px; font-weight: 650;
   }
-  .ghost:hover { background: rgba(255,255,255,.05); }
-  .ghost:active { transform: scale(0.98); }
   .list {
     display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start;
     max-height: 42vh; overflow: auto;
   }
   .tag {
     display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
-    border: 1px solid rgba(255,255,255,.08); background: #1b1e27; color: #f3efe7;
+    border: 0; color: #1c1915;
     border-radius: 999px; padding: 5px 9px; cursor: pointer; font-size: 12px;
   }
-  .tag .n { color: #9c968b; font-size: 10px; font-variant-numeric: tabular-nums; }
-  .tag.on { background: #ffb020; border-color: #ffb020; color: #1c1404; font-weight: 600; }
-  .tag.on .n { color: rgba(28,20,4,.62); }
-  .tag.hot { border-color: rgba(255,176,32,.8); }
-  .tag.dim { opacity: .4; }
+  .tag .n { color: rgba(28,25,21,.5); font-size: 10px; font-variant-numeric: tabular-nums; }
+  .tag.on {
+    background: rgba(255,255,255,.62); font-weight: 650;
+    box-shadow: inset 0 1px 0 #fff, inset 0 -8px 14px rgba(255,255,255,.3), 0 6px 14px rgba(0,0,0,.08);
+  }
+  .tag.on .n { color: rgba(28,25,21,.55); }
+  .tag.hot { box-shadow: inset 0 1px 0 #fff, inset 0 0 0 1px rgba(255,255,255,.9); }
+  .tag.dim { opacity: .45; }
   .tag kbd {
     font-family: inherit; font-size: 10px; padding: 0 4px; border-radius: 4px;
-    background: rgba(255,176,32,.16); color: #ffb020;
+    background: rgba(255,255,255,.45); color: #1c1915;
   }
-  .tag.on kbd { background: rgba(0,0,0,.12); color: #1c1404; }
-  .tag:active { transform: scale(0.98); }
-  .empty { color: #9c968b; font-size: 12px; padding: 8px 2px; }
-  .foot { font-size: 11px; color: #8a847a; }
+  .empty { color: rgba(28,25,21,.62); font-size: 12px; padding: 8px 2px; }
+  .foot { font-size: 11px; color: rgba(28,25,21,.55); }
   `;
 
   const PAGE_CSS = `
@@ -735,10 +960,12 @@
     const wrap = document.createElement('div');
     wrap.className = 'wrap';
     wrap.innerHTML = `
-      <div class="hd">
+      <div class="plate"></div>
+      <div class="hd" title="点击展开或收起，按住拖动">
         <span class="name">标签透镜</span>
         <span class="ver">v${VERSION}</span>
-        <button class="icon-btn" type="button" data-act="collapse" title="折叠">–</button>
+        <span class="sum"></span>
+        <span class="chev">收起</span>
       </div>
       <div class="body">
         <div class="seg">
@@ -747,7 +974,7 @@
         </div>
         <div class="field">
           <span class="chips"></span>
-          <input type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="输入标签，回车添加" />
+          <input type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="输入标签，回车记下。本页没有也能加" />
         </div>
         <div class="hint"></div>
         <div class="row">
@@ -756,7 +983,7 @@
         </div>
         <div class="list"></div>
         <div class="row">
-          <span class="foot">不分大小写。简体和繁体算同一个。</span>
+          <span class="foot">记下的标签会留着。这一页没有，换页后会对上。不分大小写，简繁算同一个。</span>
           <button class="ghost" type="button" data-act="reset">清空</button>
         </div>
       </div>
@@ -773,9 +1000,11 @@
       statusBox: wrap.querySelector('.count'),
       hintBox: wrap.querySelector('.hint'),
       kwInput: wrap.querySelector('input'),
-      collapseBtn: wrap.querySelector('[data-act="collapse"]'),
+      chev: wrap.querySelector('.chev'),
+      sum: wrap.querySelector('.sum'),
       jumpBtn: wrap.querySelector('[data-act="jump"]'),
     };
+    mountGlass(root, wrap.querySelector('.plate'));
 
     let composing = false;
     ui.kwInput.addEventListener('compositionstart', () => { composing = true; });
@@ -788,6 +1017,7 @@
       if (composing) return;
       state.keyword = ui.kwInput.value;
       state.hint = '';
+      state.hintKind = '';
       renderList();
       renderHint();
     });
@@ -825,13 +1055,6 @@
       const btn = e.target.closest('button');
       if (!btn) return;
       const act = btn.dataset.act;
-      if (act === 'collapse') {
-        settings.collapsePanel = !settings.collapsePanel;
-        saveSettings(settings);
-        ui.panel.classList.toggle('collapsed', settings.collapsePanel);
-        ui.collapseBtn.textContent = settings.collapsePanel ? '+' : '–';
-        return;
-      }
       if (act === 'logic') {
         settings.logic = btn.dataset.v === 'or' ? 'or' : 'and';
         saveSettings(settings);
@@ -854,36 +1077,56 @@
         else addPick(key);
         state.keyword = '';
         state.hint = '';
+        state.hintKind = '';
         ui.kwInput.value = '';
         renderPanel();
         applyHighlight();
       }
     });
 
-    ui.panel.classList.toggle('collapsed', !!settings.collapsePanel);
-    ui.collapseBtn.textContent = settings.collapsePanel ? '+' : '–';
+    applyCollapsed();
     makeDraggable(ui.panel, wrap.querySelector('.hd'));
+  }
+
+  function applyCollapsed() {
+    if (!ui.panel) return;
+    ui.panel.classList.toggle('collapsed', !!settings.collapsePanel);
+    if (ui.chev) ui.chev.textContent = settings.collapsePanel ? '展开' : '收起';
+  }
+
+  function toggleCollapse() {
+    settings.collapsePanel = !settings.collapsePanel;
+    saveSettings(settings);
+    applyCollapsed();
   }
 
   function makeDraggable(panel, handle) {
     let dragging = false;
+    let moved = false;
     let sx = 0; let sy = 0; let ox = 0; let oy = 0;
     handle.addEventListener('mousedown', (e) => {
-      if (e.target.closest('button')) return;
+      if (e.button !== 0) return;
       dragging = true;
+      moved = false;
       const r = panel.getBoundingClientRect();
       sx = e.clientX; sy = e.clientY; ox = r.left; oy = r.top;
-      panel.style.left = ox + 'px';
-      panel.style.top = oy + 'px';
-      panel.style.right = 'auto';
-      e.preventDefault();
     });
     window.addEventListener('mousemove', (e) => {
       if (!dragging) return;
-      panel.style.left = Math.max(0, ox + e.clientX - sx) + 'px';
-      panel.style.top = Math.max(0, oy + e.clientY - sy) + 'px';
+      const dx = e.clientX - sx;
+      const dy = e.clientY - sy;
+      if (Math.abs(dx) + Math.abs(dy) > 4) {
+        moved = true;
+        panel.style.left = Math.max(0, ox + dx) + 'px';
+        panel.style.top = Math.max(0, oy + dy) + 'px';
+        panel.style.right = 'auto';
+      }
     });
     window.addEventListener('mouseup', () => { dragging = false; });
+    handle.addEventListener('click', () => {
+      if (moved) { moved = false; return; }
+      toggleCollapse();
+    });
   }
 
   function renderLogic() {
@@ -898,7 +1141,8 @@
     ui.chips.replaceChildren();
     picks.forEach((key) => {
       const chip = document.createElement('span');
-      chip.className = 'chip';
+      chip.className = 'chip' + (state.tagIndex.has(key) ? '' : ' away');
+      if (!state.tagIndex.has(key)) chip.title = '本页还没有，已记下';
       const name = document.createElement('span');
       name.textContent = labelOf(key);
       const x = document.createElement('button');
@@ -916,7 +1160,8 @@
   function renderHint() {
     if (!ui.hintBox) return;
     ui.hintBox.textContent = state.hint || '';
-    ui.hintBox.classList.toggle('warn', !!state.hint);
+    ui.hintBox.classList.toggle('warn', state.hintKind === 'warn');
+    ui.hintBox.classList.toggle('note', state.hintKind === 'note');
   }
 
   function renderList(opts) {
@@ -931,7 +1176,7 @@
     if (!tags.length) {
       const empty = document.createElement('div');
       empty.className = 'empty';
-      empty.textContent = '本页没有读到标签';
+      empty.textContent = '本页没有读到标签。直接输入也能记下，换页后会对上';
       ui.listBox.appendChild(empty);
       return;
     }
@@ -944,6 +1189,7 @@
       btn.dataset.act = 'pick';
       btn.dataset.key = t.key;
       if (picks.includes(t.key)) btn.classList.add('on');
+      if (t.away || !state.tagIndex.has(t.key)) btn.classList.add('away');
       if (hot) btn.classList.add('hot');
       if (q && !hot) btn.classList.add('dim');
 
@@ -953,7 +1199,7 @@
 
       const n = document.createElement('span');
       n.className = 'n';
-      n.textContent = String(t.count);
+      n.textContent = (t.away || !state.tagIndex.has(t.key)) ? '未出现' : String(t.count);
       btn.appendChild(n);
 
       if (t.key === target) {
@@ -973,9 +1219,12 @@
     } else if (state.cursor >= 0 && state.matched > 0) {
       ui.statusBox.innerHTML = '亮了 <b>' + state.matched + '</b> / ' + state.total
         + ' · 当前第 ' + (state.cursor + 1) + ' 本';
+    } else if (state.matched === 0) {
+      ui.statusBox.innerHTML = '亮了 <b>0</b> / ' + state.total + ' · 本页还没对上';
     } else {
       ui.statusBox.innerHTML = '亮了 <b>' + state.matched + '</b> / ' + state.total;
     }
+    if (ui.sum) ui.sum.textContent = picks.length ? (picks.length + ' 个标签') : '未选标签';
     if (ui.jumpBtn) ui.jumpBtn.disabled = state.matched <= 0 || !picks.length;
   }
 
@@ -1000,9 +1249,10 @@
     }
   }
 
-  function boot() {
+  function boot(allowEmpty) {
     state.adapter = pickAdapter();
-    if (!collect()) {
+    const found = collect();
+    if (!found && !(allowEmpty && state.adapter && state.adapter.id !== 'generic')) {
       console.log('[MTL] 当前页面未识别到带标签的漫画条目。适配器：' + state.adapter.name);
       return false;
     }
@@ -1016,7 +1266,7 @@
   }
 
   function bootOrWait(tries) {
-    if (boot()) return;
+    if (boot(tries <= 0)) return;
     if (tries <= 0) return;
     setTimeout(() => bootOrWait(tries - 1), 800);
   }
