@@ -2,7 +2,7 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.14
+// @version      0.2.15
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  记下要找的标签，在当前页把对上的漫画亮出来。本页没有的标签也会保存，换页后继续对。不分大小写，简体繁体视为同一个。
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.14';
+  const VERSION = '0.2.15';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -461,6 +461,16 @@
     placeNodes(parent, hits.concat(rest));
   }
 
+  function medianCellWidth(parent) {
+    const base = layoutSnap.get(parent) || [];
+    const widths = base
+      .map((node) => (node.getBoundingClientRect ? node.getBoundingClientRect().width : 0))
+      .filter((w) => w > 40)
+      .sort((a, b) => a - b);
+    if (!widths.length) return 0;
+    return widths[Math.floor(widths.length / 2)];
+  }
+
   function docBefore(a, b) {
     if (a === b) return 0;
     const pos = a.compareDocumentPosition(b);
@@ -490,13 +500,23 @@
     groups.forEach((list, parent) => {
       (isTrack(parent) ? tracks : grids).push(parent);
     });
-    grids.sort(docBefore);
-
-    if (grids.length > 1) {
-      const dest = grids[0];
+    const sized = grids.map((parent) => ({ parent, w: medianCellWidth(parent) })).filter((item) => item.w > 0);
+    const buckets = [];
+    sized.forEach((item) => {
+      const bucket = buckets.find((b) => Math.abs(b.w - item.w) / b.w < 0.12);
+      if (bucket) bucket.items.push(item.parent);
+      else buckets.push({ w: item.w, items: [item.parent] });
+    });
+    buckets.forEach((bucket) => {
+      const list = bucket.items.sort(docBefore);
+      if (list.length < 2) {
+        reorderWithin(list[0]);
+        return;
+      }
+      const dest = list[0];
       const hits = [];
       const seen = new Set();
-      grids.forEach((parent) => {
+      list.forEach((parent) => {
         layoutSnap.get(parent).forEach((node) => {
           if (seen.has(node)) return;
           if (state.items.some((it) => it.hit && it.cell === node)) {
@@ -507,12 +527,10 @@
       });
       const destRest = layoutSnap.get(dest).filter((node) => !seen.has(node));
       placeNodes(dest, hits.concat(destRest));
-      grids.slice(1).forEach((parent) => {
+      list.slice(1).forEach((parent) => {
         placeNodes(parent, layoutSnap.get(parent).filter((node) => !seen.has(node)));
       });
-    } else {
-      grids.forEach(reorderWithin);
-    }
+    });
 
     tracks.forEach((parent) => {
       reorderWithin(parent);
@@ -585,58 +603,8 @@
     tagSnap.clear();
   }
 
-  function clearHaloFit() {
-    qsa(document, '[data-mtl-halo]').forEach((el) => {
-      ['margin-top', 'margin-right', 'margin-bottom', 'margin-left'].forEach((prop) => {
-        el.style.removeProperty(prop);
-      });
-      el.removeAttribute('data-mtl-halo');
-    });
-  }
-
-  /** 高光画出卡片外沿多少像素。用来把间距补回去。 */
-  function haloPx(el) {
-    const cs = getComputedStyle(el);
-    const edge = (parseFloat(cs.outlineOffset) || 0) + (parseFloat(cs.outlineWidth) || 0);
-    let spread = 0;
-    String(cs.boxShadow || '').split(/,(?![^(]*\))/).forEach((part) => {
-      if (/inset/.test(part)) return;
-      const nums = part.match(/-?\d+(?:\.\d+)?px/g);
-      if (!nums || nums.length < 4) return;
-      const sp = parseFloat(nums[3]);
-      if (sp > spread) spread = sp;
-    });
-    return Math.ceil(Math.max(edge, spread, 0));
-  }
-
-  function applyHaloFit() {
-    state.items.forEach((it) => {
-      const el = it.el;
-      if (!el) return;
-      if (!it.hit) return;
-      let base;
-      try { base = JSON.parse(el.getAttribute('data-mtl-halo') || ''); } catch (e) { base = null; }
-      if (!base) {
-        const cs = getComputedStyle(el);
-        base = {
-          mt: parseFloat(cs.marginTop) || 0,
-          mr: parseFloat(cs.marginRight) || 0,
-          mb: parseFloat(cs.marginBottom) || 0,
-          ml: parseFloat(cs.marginLeft) || 0,
-        };
-        el.setAttribute('data-mtl-halo', JSON.stringify(base));
-      }
-      const h = haloPx(el);
-      el.style.setProperty('margin-top', (base.mt + h) + 'px', 'important');
-      el.style.setProperty('margin-right', (base.mr + h) + 'px', 'important');
-      el.style.setProperty('margin-bottom', (base.mb + h) + 'px', 'important');
-      el.style.setProperty('margin-left', (base.ml + h) + 'px', 'important');
-    });
-  }
-
   function clearMarks() {
     restoreTagOrder();
-    clearHaloFit();
     qsa(document, '[data-mtl]').forEach((el) => el.removeAttribute('data-mtl'));
     qsa(document, '[data-mtl-tag]').forEach((el) => el.removeAttribute('data-mtl-tag'));
     qsa(document, '[data-mtl-focus]').forEach((el) => {
@@ -708,7 +676,6 @@
     reorderHits();
     state.matched = active ? matched : state.total;
     markFocus();
-    applyHaloFit();
     renderStatus();
   }
 
