@@ -2,7 +2,7 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.20
+// @version      0.2.21
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  记下要找的标签，在当前页把对上的漫画亮出来。本页没有的标签也会保存，换页后继续对。不分大小写，简体繁体视为同一个。
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.20';
+  const VERSION = '0.2.21';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -605,7 +605,12 @@
 
   function clearMarks() {
     restoreTagOrder();
-    qsa(document, '[data-mtl]').forEach((el) => el.removeAttribute('data-mtl'));
+    clearHaloFit();
+    qsa(document, '[data-mtl]').forEach((el) => {
+      el.removeAttribute('data-mtl');
+      el.style.removeProperty('--mtl-r');
+    });
+    qsa(document, '[data-mtl-cover]').forEach((el) => el.removeAttribute('data-mtl-cover'));
     qsa(document, '[data-mtl-tag]').forEach((el) => el.removeAttribute('data-mtl-tag'));
     qsa(document, '[data-mtl-focus]').forEach((el) => {
       el.removeAttribute('data-mtl-focus');
@@ -657,42 +662,129 @@
     });
   }
 
-  /** 读漫画卡片自己原本的圆角，好让外面那圈跟它同心。
-   *  调用时必须还没写上 data-mtl，否则读到的是我们自己的值。 */
-  function cardRadius(el) {
-    let r = 0;
-    try { r = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0; } catch (e) { r = 0; }
-    return Math.round(Math.max(10, Math.min(r, 28)));
+  /** 封面那一层。禁漫是 .thumb-overlay / .thumb-overlay-albums，高亮只画在这层，
+   *  不要去改它的宽高：它是 100% 宽 + 官方 3/4，父级一加内边距就会被挤小。 */
+  function coverEl(el) {
+    if (!el || !el.querySelector) return el;
+    return el.querySelector('.thumb-overlay-albums')
+      || el.querySelector('.thumb-overlay')
+      || el;
+  }
+
+  const RING_OFF = 2;
+  const RING_LINE = 1.5;
+  const RING_LINE_FOCUS = 2;
+  const RING_SLACK = 1;
+
+  function clearHaloFit() {
+    qsa(document, '[data-mtl-cover]').forEach((el) => {
+      el.style.removeProperty('--mtl-off');
+      el.style.removeProperty('--mtl-line');
+    });
+  }
+
+  function ringLine(it) {
+    return it.el && it.el.getAttribute('data-mtl-focus') === '1' ? RING_LINE_FOCUS : RING_LINE;
+  }
+
+  /** 圈画在封面外面。两本都亮时，两边的圈都要吃进官方空隙；
+   *  空隙不够就收 offset，绝不给封面加 padding，否则会比旁边的小一圈。 */
+  function applyHaloFit() {
+    clearHaloFit();
+    if (!picks.length) return;
+
+    const recs = [];
+    state.items.forEach((it) => {
+      const cover = coverEl(it.el);
+      if (!cover || !cover.getBoundingClientRect) return;
+      const r = cover.getBoundingClientRect();
+      if (r.width < 8 || r.height < 8) return;
+      recs.push({ it: it, cover: cover, r: r, hit: !!it.hit });
+    });
+    if (!recs.length) return;
+
+    const off = new Map();
+    const line = new Map();
+    recs.forEach((x) => {
+      if (!x.hit) return;
+      off.set(x.cover, RING_OFF);
+      line.set(x.cover, ringLine(x.it));
+    });
+
+    function cap(cover, budget) {
+      if (!off.has(cover)) return;
+      const maxOff = Math.max(0, budget - line.get(cover));
+      if (maxOff < off.get(cover)) off.set(cover, maxOff);
+    }
+
+    function meet(a, b, gap) {
+      if (!(a.hit || b.hit)) return;
+      if (!(gap >= 0) || gap > 120) return;
+      const aNeed = a.hit ? off.get(a.cover) + line.get(a.cover) : 0;
+      const bNeed = b.hit ? off.get(b.cover) + line.get(b.cover) : 0;
+      if (aNeed + bNeed + RING_SLACK <= gap) return;
+      const n = (a.hit ? 1 : 0) + (b.hit ? 1 : 0);
+      const budget = (gap - RING_SLACK) / n;
+      if (a.hit) cap(a.cover, budget);
+      if (b.hit) cap(b.cover, budget);
+    }
+
+    function pairAxis(bucket, along, gapOf) {
+      const groups = new Map();
+      recs.forEach((x) => {
+        const k = bucket(x.r);
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(x);
+      });
+      groups.forEach((list) => {
+        list.sort((a, b) => along(a.r) - along(b.r));
+        for (let i = 0; i < list.length - 1; i++) {
+          meet(list[i], list[i + 1], gapOf(list[i].r, list[i + 1].r));
+        }
+      });
+    }
+
+    for (let pass = 0; pass < 2; pass++) {
+      pairAxis(
+        (r) => Math.round(r.top / 6),
+        (r) => r.left,
+        (a, b) => b.left - a.right
+      );
+      pairAxis(
+        (r) => Math.round(r.left / 6),
+        (r) => r.top,
+        (a, b) => b.top - a.bottom
+      );
+    }
+
+    recs.forEach((x) => {
+      if (!x.hit) return;
+      x.cover.style.setProperty('--mtl-off', off.get(x.cover).toFixed(2) + 'px');
+      x.cover.style.setProperty('--mtl-line', line.get(x.cover) + 'px');
+    });
   }
 
   function applyHighlight() {
     clearMarks();
     const active = picks.length > 0;
     let matched = 0;
-    const hits = [];
     state.items.forEach((it) => {
       const hit = active && matches(it.keys);
       it.hit = hit;
       if (!active) return;
       if (hit) {
         matched++;
-        hits.push(it);
+        it.el.setAttribute('data-mtl', 'hit');
+        coverEl(it.el).setAttribute('data-mtl-cover', '1');
+        markTagNodes(it.el, it.keys.filter((k) => picks.includes(k)));
+      } else {
+        it.el.setAttribute('data-mtl', 'miss');
       }
-    });
-    // 先把所有命中卡的圆角量出来（都是读），再统一写属性。
-    // 读和写分两趟走，中间不夹写操作，一帧只算一次布局。
-    const radii = hits.map((it) => cardRadius(it.el));
-    hits.forEach((it, i) => {
-      it.el.style.setProperty('--mtl-r', radii[i] + 'px');
-      it.el.setAttribute('data-mtl', 'hit');
-      markTagNodes(it.el, it.keys.filter((k) => picks.includes(k)));
-    });
-    state.items.forEach((it) => {
-      if (active && !it.hit) it.el.setAttribute('data-mtl', 'miss');
     });
     reorderHits();
     state.matched = active ? matched : state.total;
     markFocus();
+    applyHaloFit();
     renderStatus();
   }
 
@@ -707,10 +799,11 @@
     if (state.cursor < 0 || state.cursor >= list.length) return null;
     const el = list[state.cursor].el;
     el.setAttribute('data-mtl-focus', '1');
+    const cover = coverEl(el);
     const badge = document.createElement('div');
     badge.className = 'mtl-focus-badge';
     badge.textContent = '当前 ' + (state.cursor + 1) + '/' + list.length;
-    el.appendChild(badge);
+    cover.appendChild(badge);
     return el;
   }
 
@@ -859,29 +952,42 @@
     const img = ctx.createImageData(w, h);
     paint(img.data, w, h, radius, bezel);
     ctx.putImageData(img, 0, 0);
+    return c;
+  }
+
+  /** 给位移贴图四周留取样边。Chromium 的 backdrop-filter 只给元素自己那块背景，
+   *  feDisplacementMap 取样超出 scale/2 就会在右侧画出一条竖线。
+   *  面板比可见区域大一圈，折光就能拉到面板外面的画面；竖线落在 overflow 裁掉的地方。 */
+  function padMap(src, pad, fill) {
+    if (!pad) return src.toDataURL();
+    const c = document.createElement('canvas');
+    c.width = src.width + pad * 2;
+    c.height = src.height + pad * 2;
+    const ctx = c.getContext('2d');
+    if (fill) {
+      ctx.fillStyle = fill;
+      ctx.fillRect(0, 0, c.width, c.height);
+    }
+    ctx.drawImage(src, pad, pad);
     return c.toDataURL();
   }
 
   const GLASS_DEFAULTS = {
     radiusCss: 44,      // 圆角，元素像素。要跟 .wrap 的 border-radius 对上，折光才贴边
     radiusMin: 16,
-    bezelCss: 26,       // 折光带宽度。窄一点梯度更陡，边缘像透镜而不是糊了一圈
+    bezelCss: 52,       // 折光带宽度。那个液态玻璃页默认 60，太窄就只剩一圈雾
     bezelMin: 12,
-    depth: 78,          // 玻璃厚度，只影响折光的分布
-    ior: 3.0,           // 折射率，越大边缘扭得越狠
+    depth: 80,          // 玻璃厚度，只影响折光的分布。液态玻璃页默认 80
+    ior: 3.0,           // 折射率。液态玻璃页 / 苹果这档都是 3，不能再往下砍
     strength: 1.55,     // 最大位移 = 剖线峰值 × strength
     dispPx: 0,          // 大于 0 时直接指定最大位移（元素像素）
-    // feDisplacementMap 的 scale = 峰值偏移的两倍。Chromium 在 backdrop-filter 里
-    // 只把元素本身那块背景交给滤镜，取样超过元素右侧 scale/2 处就露馅，表现为一条竖线。
-    // 峰值位移按折光带宽度封顶，竖线就落到看不见的地方。
-    capBezel: 1.1,      // 峰值位移 ≤ 折光带宽度 × capBezel
-    saturate: 1.5,      // 整面提一点饱和，封面颜色透过玻璃还活着。4 会做成霓虹边
-    specFade: 0.5,      // 高光强度。用 screen 叠在边上，不要铺到整面
-    specGain: 2.2,      // 高光带宽度 = bezel × specGain
-    // 边缘折光用这一档轻糊，才能看得出后面的条纹在弯。
-    blur: 2.4,
-    // 中间模身另糊一档。0 表示整块都走折光（按钮太小，糊两层看不出来）。
-    bodyBlur: 14,
+    expandSample: false,// 面板打开：四周留 scale/2，折光按折射率走，竖线藏在裁切外
+    // 按钮不扩取样时仍要封顶，否则小胶囊右侧会裂开。
+    capBezel: 1.1,
+    saturate: 4,        // 折光带里的色散。苹果边缘那圈绿/彩边就是它，不要降到 1.5
+    specFade: 0.5,      // 高光强度，液态玻璃页默认 0.50
+    specGain: 2.5,      // 高光带宽度 = bezel × specGain
+    blur: 0.35,         // 液态玻璃页 0.3。糊大了折光就被磨砂盖掉
     maxPixels: 280 * 360,
   };
 
@@ -902,7 +1008,7 @@
     const profile = glassProfile(Math.max(4, o.depth), bezel, o.ior);
     let maxDisp = 1;
     for (let i = 0; i < profile.length; i++) maxDisp = Math.max(maxDisp, Math.abs(profile[i]));
-    const dispUrl = glassMap(mapW, mapH, radius, bezel, (d, W, H, r, bz) => {
+    const dispCanvas = glassMap(mapW, mapH, radius, bezel, (d, W, H, r, bz) => {
       for (let i = 0; i < d.length; i += 4) {
         d[i] = 128; d[i + 1] = 128; d[i + 2] = 0; d[i + 3] = 255;
       }
@@ -930,7 +1036,7 @@
         }
       }
     });
-    const specUrl = glassMap(mapW, mapH, radius, Math.max(1, Math.min(bezel * o.specGain, radius)), (d, W, H, r, bz) => {
+    const specCanvas = glassMap(mapW, mapH, radius, Math.max(1, Math.min(bezel * o.specGain, radius)), (d, W, H, r, bz) => {
       d.fill(0);
       const rSq = r * r;
       const r1Sq = (r + 1) * (r + 1);
@@ -961,39 +1067,60 @@
         }
       }
     });
-    // scale 是「峰值偏移 × 2」。剖线峰值会随玻璃厚度放大，不加约束能到 290px 这种
-    // 荒唐值：折光带会去拉元素外面一百多像素的画面，玻璃糊成一片，还正好把上面那条
-    // 竖线推到面板中间。这里统一按折光带宽度封顶。
+    // scale 是「峰值偏移 × 2」。剖线峰值会随玻璃厚度放大，不加约束能到 290px：
+    // 折光带去拉元素外面一百多像素，玻璃糊成一片，右侧 scale/2 处还会裂一条竖线。
+    // 面板打开 expandSample：四周留出取样边，位移按折射率走，竖线裁在可见区域外。
     const rawScale = o.dispPx > 0 ? o.dispPx : maxDisp * o.strength;
-    const capScale = Math.max(6, o.bezelCss * (o.capBezel == null ? 0.85 : o.capBezel));
+    const capScale = o.expandSample
+      ? Math.max(24, Math.min(w, h) * 0.7)
+      : Math.max(6, o.bezelCss * (o.capBezel == null ? 0.85 : o.capBezel));
     const scale = Math.min(rawScale, capScale);
+    const padCss = o.expandSample ? Math.ceil(scale / 2) + 8 : 0;
+    const padPx = padCss ? Math.max(1, Math.round(padCss * k)) : 0;
+    const dispUrl = padMap(dispCanvas, padPx, '#808000');
+    const specUrl = padMap(specCanvas, padPx, '');
+    let maskUrl = '';
+    if (padPx) {
+      const mask = document.createElement('canvas');
+      mask.width = dispCanvas.width + padPx * 2;
+      mask.height = dispCanvas.height + padPx * 2;
+      const mctx = mask.getContext('2d');
+      mctx.fillStyle = '#fff';
+      const rr = typeof mctx.roundRect === 'function';
+      mctx.beginPath();
+      if (rr) mctx.roundRect(padPx, padPx, dispCanvas.width, dispCanvas.height, radius);
+      else {
+        const x = padPx; const y = padPx; const mw = dispCanvas.width; const mh = dispCanvas.height;
+        mctx.moveTo(x + radius, y);
+        mctx.arcTo(x + mw, y, x + mw, y + mh, radius);
+        mctx.arcTo(x + mw, y + mh, x, y + mh, radius);
+        mctx.arcTo(x, y + mh, x, y, radius);
+        mctx.arcTo(x, y, x + mw, y, radius);
+        mctx.closePath();
+      }
+      mctx.fill();
+      maskUrl = mask.toDataURL();
+    }
     const stretch = 'x="0" y="0" width="100%" height="100%" preserveAspectRatio="none"';
-    const bodyBlur = o.bodyBlur > 0
-      ? `<feGaussianBlur in="SourceGraphic" stdDeviation="${o.bodyBlur}" result="frost"/>
-      <feColorMatrix in="frost" type="saturate" values="${o.saturate}" result="frost_sat"/>
-      <feComponentTransfer in="disp_map" result="edge_from_disp">
-        <feFuncR type="table" tableValues="1 0 1"/>
-        <feFuncG type="table" tableValues="1 0 1"/>
-        <feFuncB type="discrete" tableValues="0"/>
-        <feFuncA type="discrete" tableValues="1"/>
-      </feComponentTransfer>
-      <feColorMatrix in="edge_from_disp" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  1 1 0 0 0" result="bezel_raw"/>
-      <feGaussianBlur in="bezel_raw" stdDeviation="2.2" result="bezel_mask"/>
-      <feComposite in="lively" in2="bezel_mask" operator="in" result="rim_glass"/>
-      <feBlend in="rim_glass" in2="frost_sat" mode="normal" result="body"/>`
-      : `<feMerge result="body"><feMergeNode in="lively"/></feMerge>`;
-    return `<filter id="${id}" x="0%" y="0%" width="100%" height="100%" color-interpolation-filters="sRGB">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="${o.blur}" result="crisp"/>
+    const crop = maskUrl
+      ? `<feImage href="${maskUrl}" ${stretch} result="inner_mask"/>
+      <feComposite in="glass_out" in2="inner_mask" operator="in"/>`
+      : '';
+    const html = `<filter id="${id}" x="0%" y="0%" width="100%" height="100%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="${o.blur}" result="blurred_source"/>
       <feImage href="${dispUrl}" ${stretch} result="disp_map"/>
-      <feDisplacementMap in="crisp" in2="disp_map" scale="${scale}" xChannelSelector="R" yChannelSelector="G" result="displaced"/>
-      <feColorMatrix in="displaced" type="saturate" values="${Math.max(o.saturate, 1.35)}" result="lively"/>
-      ${bodyBlur}
+      <feDisplacementMap in="blurred_source" in2="disp_map" scale="${scale}" xChannelSelector="R" yChannelSelector="G" result="displaced"/>
+      <feColorMatrix in="displaced" type="saturate" values="${o.saturate}" result="displaced_sat"/>
       <feImage href="${specUrl}" ${stretch} result="spec_layer"/>
+      <feComposite in="displaced_sat" in2="spec_layer" operator="in" result="spec_masked"/>
       <feComponentTransfer in="spec_layer" result="spec_faded">
         <feFuncA type="linear" slope="${o.specFade}"/>
       </feComponentTransfer>
-      <feBlend in="spec_faded" in2="body" mode="screen"/>
+      <feBlend in="spec_masked" in2="displaced" mode="normal" result="with_sat"/>
+      <feBlend in="spec_faded" in2="with_sat" mode="normal" result="glass_out"/>
+      ${crop}
     </filter>`;
+    return { html, pad: padCss, scale };
   }
 
   /* 玻璃工厂：一块 <defs> 装下所有滤镜，按尺寸缓存复用。
@@ -1022,13 +1149,13 @@
         bezelCss: Math.max(3, s * 0.34),
         bezelMin: 2,
         depth: Math.max(8, s * 0.85),
-        ior: 2.55,
+        ior: 3.0,
         dispPx: Math.max(2, Math.min(16, s * 0.26)),
-        saturate: 1.8,
-        specFade: 0.42,
-        specGain: 2.2,
-        blur: Math.max(1.2, Math.min(4.5, s * 0.12)),
-        bodyBlur: 0,
+        saturate: 4,
+        specFade: 0.5,
+        specGain: 2.5,
+        blur: 0.4,
+        expandSample: false,
         maxPixels: 160 * 160,
       };
     }
@@ -1050,7 +1177,8 @@
       if (built.size >= MAX_FILTERS) return nearestBox(box);
       const id = 'mtl-g' + (++seq);
       try {
-        defs.insertAdjacentHTML('beforeend', buildGlassFilter(id, box.w, box.h, buttonOptions(box.w, box.h, box.r)));
+        const rec = buildGlassFilter(id, box.w, box.h, buttonOptions(box.w, box.h, box.r));
+        defs.insertAdjacentHTML('beforeend', rec.html);
       } catch (e) {
         console.warn('[MTL] 玻璃滤镜生成失败', e);
         return null;
@@ -1169,8 +1297,9 @@
       let last = '';
       let timer = 0;
       const rebuild = () => {
-        const w = Math.round(plate.offsetWidth);
-        const h = Math.round(plate.offsetHeight);
+        const host = plate.parentElement;
+        const w = Math.round((host || plate).offsetWidth);
+        const h = Math.round((host || plate).offsetHeight);
         if (w < 8 || h < 8) return;
         const key = w + 'x' + h;
         if (key === last) return;
@@ -1179,15 +1308,18 @@
           const id = 'mtl-panel-' + (++panelSeq);
           let radiusCss = GLASS_DEFAULTS.radiusCss;
           try {
-            const raw = getComputedStyle(plate).borderTopLeftRadius
-              || (plate.parentElement && getComputedStyle(plate.parentElement).borderTopLeftRadius);
+            const raw = getComputedStyle(host || plate).borderTopLeftRadius;
             const parsed = parseFloat(raw);
             if (parsed > 0) radiusCss = parsed;
           } catch (e) { /* 用默认圆角 */ }
-          defs.insertAdjacentHTML('beforeend', buildGlassFilter(id, w, h, {
+          const rec = buildGlassFilter(id, w, h, {
             radiusCss,
             radiusMin: Math.min(16, Math.max(8, Math.round(radiusCss / 2))),
-          }));
+            expandSample: true,
+          });
+          defs.insertAdjacentHTML('beforeend', rec.html);
+          plate.style.inset = rec.pad ? (-rec.pad + 'px') : '0px';
+          plate.style.clipPath = 'none';
           plate.style.backdropFilter = 'url(#' + id + ')';
           plate.style.webkitBackdropFilter = 'url(#' + id + ')';
           plate.classList.add('refract');
@@ -1202,7 +1334,7 @@
         clearTimeout(timer);
         timer = setTimeout(rebuild, 80);
       };
-      if (typeof ResizeObserver === 'function') new ResizeObserver(schedule).observe(plate);
+      if (typeof ResizeObserver === 'function') new ResizeObserver(schedule).observe(plate.parentElement || plate);
       requestAnimationFrame(rebuild);
     }
 
@@ -1239,22 +1371,27 @@
       0 0 0 0.5px rgba(255,255,255,.38);
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
     font-size: 13px; line-height: 1.45;
-    overflow: hidden;
+    overflow: visible;
     isolation: isolate;
+  }
+  .shell {
+    position: relative; z-index: 1;
+    display: flex; flex-direction: column;
+    max-height: inherit; min-height: 0; flex: 1;
+    overflow: hidden;
+    border-radius: inherit;
   }
   .plate {
     position: absolute; inset: 0; z-index: 0; border-radius: inherit; pointer-events: none;
-    /* 玻璃本身没有颜色，靠磨砂把后面的封面揉进来。白膜一厚就成塑料。 */
-    background: rgba(255,255,255,.07);
+    /* 玻璃本身没有颜色。折光在滤镜里；这里只留很淡的底，免得又变成白膜。 */
+    background: rgba(255,255,255,.06);
     box-shadow: inset 0 0 18px -10px rgba(255,255,255,.42);
-    backdrop-filter: blur(22px) saturate(1.45);
-    -webkit-backdrop-filter: blur(22px) saturate(1.45);
+    backdrop-filter: blur(8px) saturate(1.6);
+    -webkit-backdrop-filter: blur(8px) saturate(1.6);
   }
   .plate.refract {
-    background: rgba(255,255,255,.05);
-    box-shadow:
-      inset 0 0 22px -12px rgba(255,255,255,.38),
-      inset 0 -18px 24px -18px rgba(24,20,16,.16);
+    background: transparent;
+    box-shadow: none;
   }
   .lip {
     position: absolute; inset: 0; z-index: 2; pointer-events: none; border-radius: inherit;
@@ -1502,29 +1639,24 @@
   `;
 
   const PAGE_CSS = `
-  /* 高亮圈：外面那圈跟卡片本身同心。
-   * 外圈圆角 = 卡片圆角 + 间距 —— 只有 outline-offset 会这么算；
-   * box-shadow 的「0 0 0 Npx」扩散环圆角不会跟着外扩，拐角处就会露出一个尖角。
-   * 卡片自己的圆角由 JS 读出来后写进 --mtl-r，不动网站原来的形状。 */
-  [data-mtl="hit"] {
-    border-radius: var(--mtl-r, 18px) !important;
-    outline: 1.5px solid rgba(255,255,255,.92) !important;
-    outline-offset: 5px !important;
-    box-shadow:
-      inset 0 1px 0 rgba(255,255,255,.5),
-      inset 0 0 0 1px rgba(255,186,86,.5),
-      0 0 20px rgba(255,166,48,.32) !important;
+  /* 高亮只画在封面 .thumb-overlay 上。
+   * 不要给整格或封面写 padding / margin / width / height / border-radius：
+   * 封面是 100% 宽 + 官方 3/4，父级一加内边距就会比旁边没高亮的小一圈。
+   * 圈默认外扩 2px。两本都亮时 JS 按官方空隙收 --mtl-off，避免圈和圈叠在一起。
+   * 外发光会铺到隔壁，所以不用。 */
+  [data-mtl-cover] {
+    outline: var(--mtl-line, 1.5px) solid rgba(255,255,255,.92) !important;
+    outline-offset: var(--mtl-off, 2px) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.5) !important;
   }
-  /* 当前看的那一本换成冷色。要挂角标，所以这里才需要 relative。 */
-  [data-mtl-focus="1"] {
-    outline: 2px solid #fff !important;
-    outline-offset: 5px !important;
-    box-shadow:
-      inset 0 1px 0 rgba(255,255,255,.68),
-      inset 0 0 0 1px rgba(146,216,255,.58),
-      0 0 22px rgba(92,184,255,.36) !important;
-    position: relative !important;
-    z-index: 4 !important;
+  /* 当前看的那一本换成冷色。角标挂在封面上，封面自己是 relative。 */
+  [data-mtl-focus="1"] [data-mtl-cover],
+  [data-mtl-focus="1"][data-mtl-cover] {
+    outline-color: #fff !important;
+    outline-width: var(--mtl-line, 2px) !important;
+    outline-offset: var(--mtl-off, 2px) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.68) !important;
+    z-index: 4;
   }
   .mtl-focus-badge {
     position: absolute !important;
@@ -1579,6 +1711,7 @@
     wrap.className = 'wrap';
     wrap.innerHTML = `
       <div class="plate"></div>
+      <div class="shell">
       <div class="lip"></div>
       <div class="hd" title="点击展开或收起，按住拖动">
         <span class="name">标签透镜</span>
@@ -1607,6 +1740,7 @@
         <div class="list"></div>
         <p class="foot">不分大小写，简繁算同一个。这一页没有的词也会记下。</p>
         <button class="clear glassable" type="button" data-act="reset">清空已选</button>
+      </div>
       </div>
     `;
     root.appendChild(wrap);
