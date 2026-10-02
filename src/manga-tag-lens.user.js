@@ -2,7 +2,7 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.17
+// @version      0.2.19
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  记下要找的标签，在当前页把对上的漫画亮出来。本页没有的标签也会保存，换页后继续对。不分大小写，简体繁体视为同一个。
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.17';
+  const VERSION = '0.2.19';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -657,21 +657,38 @@
     });
   }
 
+  /** 读漫画卡片自己原本的圆角，好让外面那圈跟它同心。
+   *  调用时必须还没写上 data-mtl，否则读到的是我们自己的值。 */
+  function cardRadius(el) {
+    let r = 0;
+    try { r = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0; } catch (e) { r = 0; }
+    return Math.round(Math.max(10, Math.min(r, 28)));
+  }
+
   function applyHighlight() {
     clearMarks();
     const active = picks.length > 0;
     let matched = 0;
+    const hits = [];
     state.items.forEach((it) => {
       const hit = active && matches(it.keys);
       it.hit = hit;
       if (!active) return;
       if (hit) {
         matched++;
-        it.el.setAttribute('data-mtl', 'hit');
-        markTagNodes(it.el, it.keys.filter((k) => picks.includes(k)));
-      } else {
-        it.el.setAttribute('data-mtl', 'miss');
+        hits.push(it);
       }
+    });
+    // 先把所有命中卡的圆角量出来（都是读），再统一写属性。
+    // 读和写分两趟走，中间不夹写操作，一帧只算一次布局。
+    const radii = hits.map((it) => cardRadius(it.el));
+    hits.forEach((it, i) => {
+      it.el.style.setProperty('--mtl-r', radii[i] + 'px');
+      it.el.setAttribute('data-mtl', 'hit');
+      markTagNodes(it.el, it.keys.filter((k) => picks.includes(k)));
+    });
+    state.items.forEach((it) => {
+      if (active && !it.hit) it.el.setAttribute('data-mtl', 'miss');
     });
     reorderHits();
     state.matched = active ? matched : state.total;
@@ -848,16 +865,20 @@
   const GLASS_DEFAULTS = {
     radiusCss: 40,      // 圆角，元素像素
     radiusMin: 16,
-    bezelCss: 34,       // 折光带宽度，元素像素
+    bezelCss: 26,       // 折光带宽度，元素像素。窄一点梯度更陡，边缘像透镜而不是糊了一圈
     bezelMin: 12,
     depth: 78,          // 玻璃厚度，只影响折光的分布
-    ior: 2.6,           // 折射率
+    ior: 3.0,           // 折射率，越大边缘扭得越狠
     strength: 1.55,     // 最大位移 = 剖线峰值 × strength
     dispPx: 0,          // 大于 0 时直接指定最大位移（元素像素）
+    // feDisplacementMap 的 scale = 峰值偏移的两倍。Chromium 在 backdrop-filter 里
+    // 只把元素本身那块背景交给滤镜，取样超过元素右侧 scale/2 处就露馅，表现为一条竖线。
+    // 峰值位移按折光带宽度封顶，竖线就落到看不见的地方。
+    capBezel: 1.1,      // 峰值位移 ≤ 折光带宽度 × capBezel
     saturate: 4,        // 折光带里提一点饱和度
-    specFade: 0.85,     // 高光强度
+    specFade: 0.9,      // 高光强度
     specGain: 2.5,      // 高光带宽度 = bezel × specGain
-    blur: 2.4,          // 背景先糊一下，像磨砂
+    blur: 1.6,          // 背景先糊一下，像磨砂；太糊就只剩一层透明，看不出玻璃
     maxPixels: 280 * 360,
   };
 
@@ -937,7 +958,12 @@
         }
       }
     });
-    const scale = o.dispPx > 0 ? o.dispPx : maxDisp * o.strength;
+    // scale 是「峰值偏移 × 2」。剖线峰值会随玻璃厚度放大，不加约束能到 290px 这种
+    // 荒唐值：折光带会去拉元素外面一百多像素的画面，玻璃糊成一片，还正好把上面那条
+    // 竖线推到面板中间。这里统一按折光带宽度封顶。
+    const rawScale = o.dispPx > 0 ? o.dispPx : maxDisp * o.strength;
+    const capScale = Math.max(6, o.bezelCss * (o.capBezel == null ? 0.85 : o.capBezel));
+    const scale = Math.min(rawScale, capScale);
     const stretch = 'x="0" y="0" width="100%" height="100%" preserveAspectRatio="none"';
     return `<filter id="${id}" x="0%" y="0%" width="100%" height="100%" color-interpolation-filters="sRGB">
       <feGaussianBlur in="SourceGraphic" stdDeviation="${o.blur}" result="blurred_source"/>
@@ -1195,18 +1221,33 @@
     -webkit-backdrop-filter: blur(22px) saturate(1.8);
   }
   .plate.refract {
-    background: rgba(255,255,255,.06);
-    box-shadow: inset 0 0 30px -10px rgba(255,255,255,.6);
+    /* 染色 6% 太淡：面板压在什么颜色上，字就跟着什么颜色走，深浅全靠运气。
+       加到 12%，玻璃后面是什么样还看得见，但字的底子稳定了。 */
+    background: rgba(255,255,255,.12);
+    box-shadow:
+      inset 0 0 30px -10px rgba(255,255,255,.6),
+      inset 0 0 20px -5px rgba(24,20,16,.22);
   }
   .lip {
     position: absolute; inset: 0; z-index: 2; pointer-events: none; border-radius: inherit;
+    /* 高光按「光从左上来」分强弱：顶边最亮，左边次之，右下几乎不亮。
+       整圈一个亮度会显得是塑料壳，不是玻璃。 */
     box-shadow:
-      inset 0 1.5px 0 rgba(255,255,255,.95),
-      inset 0 0 0 1px rgba(255,255,255,.4),
-      inset 0 -20px 26px -18px rgba(38,50,70,.24);
-    background: linear-gradient(180deg, rgba(255,255,255,.34), rgba(255,255,255,0) 24%);
+      inset 0 1.2px 0 rgba(255,255,255,.95),
+      inset 1.2px 0 0 rgba(255,255,255,.5),
+      inset -1px 0 0 rgba(255,255,255,.14),
+      inset 0 -1px 0 rgba(255,255,255,.12),
+      inset 0 -22px 28px -20px rgba(38,50,70,.26);
+    background:
+      linear-gradient(152deg, rgba(255,255,255,.44), rgba(255,255,255,0) 30%),
+      linear-gradient(180deg, rgba(255,255,255,.22), rgba(255,255,255,0) 18%);
   }
-  .hd, .body { position: relative; z-index: 3; }
+  .hd, .body {
+    position: relative; z-index: 3;
+    /* 面板压在漫画封面上，底下是什么颜色说不准。
+       给深色字垫一层很淡的白晕：浅底上看不出来，深底上正好把字托住。 */
+    text-shadow: 0 1px 0 rgba(255,255,255,.5);
+  }
   .hd {
     display: flex; align-items: center; gap: 8px;
     min-height: 58px; padding: 13px 15px 11px 20px;
@@ -1336,6 +1377,7 @@
   .chip.away, .tag.away { opacity: .7; }
   .field input {
     flex: 1; min-width: 118px; border: 0; outline: none;
+    appearance: none; border-radius: 999px;
     background: transparent; padding: 4px 2px; font-size: 13px; color: #1c1915;
   }
   .field input::placeholder { color: rgba(28,25,21,.42); }
@@ -1393,24 +1435,27 @@
   `;
 
   const PAGE_CSS = `
+  /* 高亮圈：外面那圈跟卡片本身同心。
+   * 外圈圆角 = 卡片圆角 + 间距 —— 只有 outline-offset 会这么算；
+   * box-shadow 的「0 0 0 Npx」扩散环圆角不会跟着外扩，拐角处就会露出一个尖角。
+   * 卡片自己的圆角由 JS 读出来后写进 --mtl-r，不动网站原来的形状。 */
   [data-mtl="hit"] {
-    border-radius: 18px !important;
-    outline: 1px solid rgba(255,255,255,.95) !important;
-    outline-offset: 3px !important;
+    border-radius: var(--mtl-r, 18px) !important;
+    outline: 1.5px solid rgba(255,255,255,.92) !important;
+    outline-offset: 5px !important;
     box-shadow:
-      inset 0 1px 0 rgba(255,255,255,.7),
-      inset 0 0 22px rgba(255, 176, 64, .22),
-      0 0 0 1px rgba(255, 196, 110, .9),
-      0 0 0 4px rgba(255, 160, 48, .22) !important;
+      inset 0 1px 0 rgba(255,255,255,.5),
+      inset 0 0 0 1px rgba(255,186,86,.5),
+      0 0 20px rgba(255,166,48,.32) !important;
   }
+  /* 当前看的那一本换成冷色。要挂角标，所以这里才需要 relative。 */
   [data-mtl-focus="1"] {
-    outline: 1.5px solid #fff !important;
-    outline-offset: 3px !important;
+    outline: 2px solid #fff !important;
+    outline-offset: 5px !important;
     box-shadow:
-      inset 0 1px 0 rgba(255,255,255,.85),
-      inset 0 0 26px rgba(120, 210, 255, .38),
-      0 0 0 1px rgba(170, 230, 255, .95),
-      0 0 0 4px rgba(90, 190, 255, .34) !important;
+      inset 0 1px 0 rgba(255,255,255,.68),
+      inset 0 0 0 1px rgba(146,216,255,.58),
+      0 0 22px rgba(92,184,255,.36) !important;
     position: relative !important;
     z-index: 4 !important;
   }
@@ -1419,7 +1464,7 @@
     top: 10px !important;
     left: 10px !important;
     z-index: 6 !important;
-    background: linear-gradient(180deg, rgba(255,255,255,.82), rgba(150, 220, 255, .48)) !important;
+    background: linear-gradient(180deg, rgba(255,255,255,.86), rgba(150, 220, 255, .55)) !important;
     color: #0c2433 !important;
     font: 650 12px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif !important;
     letter-spacing: .02em !important;
@@ -1430,9 +1475,11 @@
     -webkit-backdrop-filter: blur(16px) saturate(1.8) !important;
     box-shadow: inset 0 1px 0 #fff, 0 0 0 1px rgba(170, 225, 255, .75), 0 8px 18px rgba(40, 130, 190, .28) !important;
   }
+  /* 没对上的压暗，但不靠「变透明」——那样连字一起淡掉。
+     改成降饱和 + 稍微压一点亮度，弱化的同时反而把浅色字衬得更清楚。 */
   [data-mtl="miss"] {
-    opacity: 0.4 !important;
-    filter: saturate(.72) !important;
+    opacity: .8 !important;
+    filter: saturate(.55) brightness(.96) !important;
   }
   [data-mtl-tag="1"] {
     background: linear-gradient(180deg, rgba(255,255,255,.88), rgba(255, 196, 110, .62)) !important;
