@@ -2,9 +2,9 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.1
-// @updateURL    https://raw.githubusercontent.com/toocutetop/manga-tag-lens/main/src/manga-tag-lens.user.js
-// @downloadURL  https://raw.githubusercontent.com/toocutetop/manga-tag-lens/main/src/manga-tag-lens.user.js
+// @version      0.2.2
+// @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
+// @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  手动输入多个标签，在当前页把对上的漫画和标签亮出来。不分大小写，简体繁体视为同一个，可选「同时要」或「有一个就行」。
 // @description:en  Type tags to highlight matching comics on the current page. Case-insensitive, simplified and traditional Chinese match, with AND / OR.
 // @author       you
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.1';
+  const VERSION = '0.2.2';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================

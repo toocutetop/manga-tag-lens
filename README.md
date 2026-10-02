@@ -6,7 +6,9 @@
 
 安装地址（用浏览器打开，交给油猴。以后版本号变大时它会自己更新）：
 
-https://raw.githubusercontent.com/toocutetop/manga-tag-lens/main/src/manga-tag-lens.user.js
+https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
+
+`raw.githubusercontent.com` 在国内经常打不开或显示 404。上面这个 jsDelivr 地址指向同一份脚本。
 
 ---
 
@@ -118,6 +120,7 @@ manga-tag-lens/
 - [x] v0.1.0 适配器框架 + 面板 UI + AND/OR/排除
 - [x] v0.2.0 手动输入、简繁与大小写折叠、匹配标签置顶、整卡与标签高亮
 - [x] v0.2.1 对上的漫画排到列表最前；脚本可从 GitHub 自动更新
+- [x] v0.2.2 安装地址改到 jsDelivr，避开 raw.githubusercontent.com 在国内打不开
 - [ ] 标签同义词归并（如「SF / 科幻」视为同一个）
 - [ ] 筛选方案保存与分享（把一组标签组合导出成短链）
 - [ ] 跨页保持筛选状态
