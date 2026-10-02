@@ -2,7 +2,7 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.16
+// @version      0.2.17
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  记下要找的标签，在当前页把对上的漫画亮出来。本页没有的标签也会保存，换页后继续对。不分大小写，简体繁体视为同一个。
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.16';
+  const VERSION = '0.2.17';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -800,7 +800,11 @@
   }
 
   /* ============================================================
-   * 6. 面板
+   * 6. 液态玻璃
+   * ============================================================
+   * 面板本体和面板里的每一颗按钮共用同一套折射：给元素贴一张「圆角边缘的
+   * 位移贴图」，backdrop-filter 照着它把后面的画面折一下，边缘就有了厚度。
+   * 同一尺寸只算一次并缓存，尺寸按桶取整，几十颗按钮也只生成十几张图。
    * ============================================================ */
 
   let ui = {};
@@ -841,18 +845,37 @@
     return c.toDataURL();
   }
 
-  function buildGlassFilter(w, h) {
-    let mapW = w;
-    let mapH = h;
-    const maxPixels = 280 * 360;
-    if (mapW * mapH > maxPixels) {
-      const k = Math.sqrt(maxPixels / (mapW * mapH));
-      mapW = Math.max(8, Math.round(mapW * k));
-      mapH = Math.max(8, Math.round(mapH * k));
+  const GLASS_DEFAULTS = {
+    radiusCss: 40,      // 圆角，元素像素
+    radiusMin: 16,
+    bezelCss: 34,       // 折光带宽度，元素像素
+    bezelMin: 12,
+    depth: 78,          // 玻璃厚度，只影响折光的分布
+    ior: 2.6,           // 折射率
+    strength: 1.55,     // 最大位移 = 剖线峰值 × strength
+    dispPx: 0,          // 大于 0 时直接指定最大位移（元素像素）
+    saturate: 4,        // 折光带里提一点饱和度
+    specFade: 0.85,     // 高光强度
+    specGain: 2.5,      // 高光带宽度 = bezel × specGain
+    blur: 2.4,          // 背景先糊一下，像磨砂
+    maxPixels: 280 * 360,
+  };
+
+  /** 一张玻璃 = 一个 SVG filter。w / h / radius 都用元素像素。 */
+  function buildGlassFilter(id, w, h, options) {
+    const o = Object.assign({}, GLASS_DEFAULTS, options || {});
+    let mapW = Math.max(8, Math.round(w));
+    let mapH = Math.max(8, Math.round(h));
+    if (mapW * mapH > o.maxPixels) {
+      const s = Math.sqrt(o.maxPixels / (mapW * mapH));
+      mapW = Math.max(8, Math.round(mapW * s));
+      mapH = Math.max(8, Math.round(mapH * s));
     }
-    const radius = Math.min(Math.max(16, Math.round(40 * mapW / w)), Math.floor(Math.min(mapW, mapH) / 2) - 1);
-    const bezel = Math.max(12, Math.min(Math.round(34 * mapW / w), radius - 1));
-    const profile = glassProfile(78, bezel, 2.6);
+    const k = mapW / w;
+    const ceiling = Math.floor(Math.min(mapW, mapH) / 2);
+    const radius = Math.max(1, Math.min(Math.max(o.radiusMin, Math.round(o.radiusCss * k)), ceiling - 1));
+    const bezel = Math.max(1, Math.min(Math.max(o.bezelMin, Math.round(o.bezelCss * k)), radius - 1));
+    const profile = glassProfile(Math.max(4, o.depth), bezel, o.ior);
     let maxDisp = 1;
     for (let i = 0; i < profile.length; i++) maxDisp = Math.max(maxDisp, Math.abs(profile[i]));
     const dispUrl = glassMap(mapW, mapH, radius, bezel, (d, W, H, r, bz) => {
@@ -883,7 +906,7 @@
         }
       }
     });
-    const specUrl = glassMap(mapW, mapH, radius, Math.min(bezel * 2.5, radius), (d, W, H, r, bz) => {
+    const specUrl = glassMap(mapW, mapH, radius, Math.max(1, Math.min(bezel * o.specGain, radius)), (d, W, H, r, bz) => {
       d.fill(0);
       const rSq = r * r;
       const r1Sq = (r + 1) * (r + 1);
@@ -914,53 +937,235 @@
         }
       }
     });
-    const scale = maxDisp * 1.55;
-    return `<filter id="mtl-lg" x="0%" y="0%" width="100%" height="100%" color-interpolation-filters="sRGB">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="2.4" result="blurred_source"/>
-      <feImage href="${dispUrl}" x="0" y="0" width="${w}" height="${h}" result="disp_map"/>
+    const scale = o.dispPx > 0 ? o.dispPx : maxDisp * o.strength;
+    const stretch = 'x="0" y="0" width="100%" height="100%" preserveAspectRatio="none"';
+    return `<filter id="${id}" x="0%" y="0%" width="100%" height="100%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="${o.blur}" result="blurred_source"/>
+      <feImage href="${dispUrl}" ${stretch} result="disp_map"/>
       <feDisplacementMap in="blurred_source" in2="disp_map" scale="${scale}" xChannelSelector="R" yChannelSelector="G" result="displaced"/>
-      <feColorMatrix in="displaced" type="saturate" values="4" result="displaced_sat"/>
-      <feImage href="${specUrl}" x="0" y="0" width="${w}" height="${h}" result="spec_layer"/>
+      <feColorMatrix in="displaced" type="saturate" values="${o.saturate}" result="displaced_sat"/>
+      <feImage href="${specUrl}" ${stretch} result="spec_layer"/>
       <feComposite in="displaced_sat" in2="spec_layer" operator="in" result="spec_masked"/>
       <feComponentTransfer in="spec_layer" result="spec_faded">
-        <feFuncA type="linear" slope="0.85"/>
+        <feFuncA type="linear" slope="${o.specFade}"/>
       </feComponentTransfer>
       <feBlend in="spec_masked" in2="displaced" mode="normal" result="with_sat"/>
       <feBlend in="spec_faded" in2="with_sat" mode="normal"/>
     </filter>`;
   }
 
-  function mountGlass(root, plate) {
+  /* 玻璃工厂：一块 <defs> 装下所有滤镜，按尺寸缓存复用。
+   * 只有「正在屏幕上」的按钮才挂 backdrop-filter；滚出视口的退回普通磨砂，
+   * 免得一屏几十上百颗按钮各占一层合成。 */
+  function createGlassLab(root) {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('width', '0');
-    svg.setAttribute('height', '0');
-    svg.setAttribute('color-interpolation-filters', 'sRGB');
+    svg.setAttribute('aria-hidden', 'true');
     svg.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;pointer-events:none';
     const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
     svg.appendChild(defs);
     root.appendChild(svg);
-    let timer = 0;
-    let last = '';
-    const rebuild = () => {
-      const w = Math.round(plate.offsetWidth);
-      const h = Math.round(plate.offsetHeight);
-      if (w < 8 || h < 8) return;
-      const key = w + 'x' + h;
-      if (key === last) return;
-      last = key;
+
+    const built = new Map();   // 尺寸键 -> { id, w, h, r }
+    const MAX_FILTERS = 200;
+    let seq = 0;
+    let panelSeq = 0;
+    let panelNode = null;
+
+    /** 按钮这一档的参数：比面板薄，折光带吃短边约三成，位移随短边缩放。 */
+    function buttonOptions(w, h, r) {
+      const s = Math.min(w, h);
+      return {
+        radiusCss: r,
+        radiusMin: 2,
+        bezelCss: Math.max(3, s * 0.34),
+        bezelMin: 2,
+        depth: Math.max(8, s * 0.85),
+        ior: 2.55,
+        dispPx: Math.max(2, Math.min(16, s * 0.26)),
+        saturate: 3,
+        specFade: 0.62,
+        specGain: 2.2,
+        blur: Math.max(0.6, Math.min(2.4, s * 0.07)),
+        maxPixels: 160 * 160,
+      };
+    }
+
+    /** 滤镜额度用完时，退而求其次复用一个尺寸最接近的。 */
+    function nearestBox(box) {
+      let pick = null;
+      built.forEach((rec) => {
+        const d = Math.abs(rec.w - box.w) + Math.abs(rec.h - box.h) * 2 + Math.abs(rec.r - box.r) * 4;
+        if (!pick || d < pick.d) pick = { d, rec };
+      });
+      return pick ? pick.rec.id : null;
+    }
+
+    function ensure(box) {
+      const key = box.w + 'x' + box.h + 'r' + box.r;
+      const hit = built.get(key);
+      if (hit) return hit.id;
+      if (built.size >= MAX_FILTERS) return nearestBox(box);
+      const id = 'mtl-g' + (++seq);
       try {
-        defs.innerHTML = buildGlassFilter(w, h);
-        plate.classList.add('refract');
+        defs.insertAdjacentHTML('beforeend', buildGlassFilter(id, box.w, box.h, buttonOptions(box.w, box.h, box.r)));
       } catch (e) {
-        plate.classList.remove('refract');
+        console.warn('[MTL] 玻璃滤镜生成失败', e);
+        return null;
       }
-    };
-    const schedule = () => {
-      clearTimeout(timer);
-      timer = setTimeout(rebuild, 80);
-    };
-    if (typeof ResizeObserver === 'function') new ResizeObserver(schedule).observe(plate);
-    requestAnimationFrame(rebuild);
+      built.set(key, { id, w: box.w, h: box.h, r: box.r });
+      return id;
+    }
+
+    /** 量一个元素；尺寸按桶取整，同尺寸的按钮才能共用同一张图。 */
+    function boxOf(el) {
+      const w = el.offsetWidth;
+      const h = el.offsetHeight;
+      if (w < 10 || h < 10) return null;
+      let r = 0;
+      try { r = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0; } catch (e) { r = 0; }
+      r = Math.min(r, Math.min(w, h) / 2);
+      return {
+        w: Math.max(8, Math.round(w / 8) * 8),
+        h: Math.max(8, Math.round(h / 4) * 4),
+        r: Math.max(2, Math.round(r / 2) * 2),
+      };
+    }
+
+    /** 已经量好尺寸的元素直接上玻璃。写样式不影响布局，不会打断这一帧。 */
+    function applyBox(el, box) {
+      if (el.__mtlGlass || !box) return;
+      const id = ensure(box);
+      if (!id) return;
+      el.__mtlGlass = id;
+      el.style.backdropFilter = 'url(#' + id + ')';
+      el.style.webkitBackdropFilter = 'url(#' + id + ')';
+      el.classList.add('refract');
+    }
+
+    function upgrade(el) {
+      if (el.__mtlGlass) return;
+      applyBox(el, boxOf(el));
+    }
+
+    function downgrade(el) {
+      if (!el.__mtlGlass) return;
+      el.__mtlGlass = '';
+      el.style.backdropFilter = '';
+      el.style.webkitBackdropFilter = '';
+      el.classList.remove('refract');
+    }
+
+    let io = null;
+    if (typeof IntersectionObserver === 'function') {
+      io = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (!entry.target.isConnected) return;
+          if (entry.isIntersecting) upgrade(entry.target);
+          else downgrade(entry.target);
+        });
+      }, { rootMargin: '120px' });
+    }
+
+    const groups = new Map();
+    const pending = new Set();
+    let rafId = 0;
+
+    /** 量尺寸会强制一次布局。攒到动画帧里一次做完：输入处理立刻返回，
+     *  连打几个字也只会合并成一次布局，不会一个字卡一下。 */
+    function flushEager() {
+      rafId = 0;
+      const list = [];
+      pending.forEach((el) => {
+        pending.delete(el);
+        if (el.isConnected && !el.__mtlGlass) list.push(el);
+      });
+      if (!list.length) return;
+      const boxes = new Array(list.length);
+      for (let i = 0; i < list.length; i++) boxes[i] = boxOf(list[i]);
+      for (let i = 0; i < list.length; i++) applyBox(list[i], boxes[i]);
+    }
+
+    function scheduleEager(els) {
+      if (!els.length) return;
+      els.forEach((el) => pending.add(el));
+      if (!rafId) rafId = requestAnimationFrame(flushEager);
+    }
+
+    function release(group) {
+      const set = groups.get(group || 'main');
+      if (!set) return;
+      set.forEach((el) => { if (io) io.unobserve(el); });
+      set.clear();
+    }
+
+    /** 挂上一批元素：进观察队列，同时预热前 sync 个（通常就是当前看得见的那几排），
+     *  这样第一帧就有折光、不会闪一下。剩下的等滚进视口时由观察器补上。 */
+    function watch(list, opts) {
+      const o = opts || {};
+      const group = o.group || 'main';
+      const sync = o.sync == null ? 0 : o.sync;
+      if (o.replace) release(group);
+      if (!groups.has(group)) groups.set(group, new Set());
+      const set = groups.get(group);
+      const els = Array.from(list || []).filter(Boolean);
+      if (!els.length) return;
+
+      els.forEach((el) => {
+        // 建元素时就已经带上了这个类，这里通常什么都不做；
+        // 补加会让整批元素的样式再来一遍，别小看这一次重排。
+        if (!el.classList.contains('glassable')) el.classList.add('glassable');
+        set.add(el);
+      });
+
+      if (io) els.forEach((el) => io.observe(el));
+      scheduleEager(io ? els.slice(0, sync) : els);
+    }
+
+    /** 面板本体：尺寸随窗口变，重建时换个新 id，再把旧的删掉。 */
+    function mountPanel(plate) {
+      let last = '';
+      let timer = 0;
+      const rebuild = () => {
+        const w = Math.round(plate.offsetWidth);
+        const h = Math.round(plate.offsetHeight);
+        if (w < 8 || h < 8) return;
+        const key = w + 'x' + h;
+        if (key === last) return;
+        last = key;
+        try {
+          const id = 'mtl-panel-' + (++panelSeq);
+          defs.insertAdjacentHTML('beforeend', buildGlassFilter(id, w, h, {}));
+          plate.style.backdropFilter = 'url(#' + id + ')';
+          plate.style.webkitBackdropFilter = 'url(#' + id + ')';
+          plate.classList.add('refract');
+          const fresh = defs.lastElementChild;
+          if (panelNode && panelNode !== fresh) panelNode.remove();
+          panelNode = fresh;
+        } catch (e) {
+          plate.classList.remove('refract');
+        }
+      };
+      const schedule = () => {
+        clearTimeout(timer);
+        timer = setTimeout(rebuild, 80);
+      };
+      if (typeof ResizeObserver === 'function') new ResizeObserver(schedule).observe(plate);
+      requestAnimationFrame(rebuild);
+    }
+
+    /** 面板整个拆掉时调用，别让观察器攥着一堆已经不在页面上的元素。 */
+    function destroy() {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = 0;
+      pending.clear();
+      groups.forEach((set) => set.clear());
+      groups.clear();
+      built.clear();
+      if (io) io.disconnect();
+      io = null;
+    }
+
+    return { watch, release, mountPanel, upgrade, downgrade, destroy };
   }
 
   const CSS = `
@@ -969,12 +1174,14 @@
   button, input { font: inherit; color: inherit; }
   .wrap {
     position: fixed; top: 16px; right: 16px; z-index: 2147483647;
-    width: min(336px, calc(100vw - 24px));
+    width: min(340px, calc(100vw - 24px));
     max-height: calc(100vh - 32px);
     display: flex; flex-direction: column;
     color: #16130f;
-    border-radius: 40px;
-    box-shadow: 0 10px 30px rgba(0,0,0,.16), 0 1px 0 rgba(255,255,255,.35);
+    border-radius: 38px;
+    box-shadow:
+      0 18px 44px -14px rgba(22,19,15,.44),
+      0 3px 10px -4px rgba(22,19,15,.2);
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
     font-size: 13px; line-height: 1.45;
     overflow: hidden;
@@ -983,37 +1190,36 @@
   .plate {
     position: absolute; inset: 0; z-index: 0; border-radius: inherit; pointer-events: none;
     background: rgba(255,255,255,.16);
-    box-shadow: inset 0 0 24px -8px rgba(255,255,255,.65);
+    box-shadow: inset 0 0 26px -9px rgba(255,255,255,.7);
     backdrop-filter: blur(22px) saturate(1.8);
     -webkit-backdrop-filter: blur(22px) saturate(1.8);
   }
   .plate.refract {
     background: rgba(255,255,255,.06);
-    backdrop-filter: url(#mtl-lg);
-    -webkit-backdrop-filter: url(#mtl-lg);
+    box-shadow: inset 0 0 30px -10px rgba(255,255,255,.6);
   }
   .lip {
     position: absolute; inset: 0; z-index: 2; pointer-events: none; border-radius: inherit;
     box-shadow:
-      inset 0 1.5px 0 rgba(255,255,255,.92),
-      inset 0 0 0 1px rgba(255,255,255,.38),
-      inset 0 -18px 24px rgba(255,255,255,.06);
-    background: linear-gradient(180deg, rgba(255,255,255,.34), rgba(255,255,255,0) 26%);
+      inset 0 1.5px 0 rgba(255,255,255,.95),
+      inset 0 0 0 1px rgba(255,255,255,.4),
+      inset 0 -20px 26px -18px rgba(38,50,70,.24);
+    background: linear-gradient(180deg, rgba(255,255,255,.34), rgba(255,255,255,0) 24%);
   }
   .hd, .body { position: relative; z-index: 3; }
   .hd {
     display: flex; align-items: center; gap: 8px;
-    min-height: 56px; padding: 12px 18px;
+    min-height: 58px; padding: 13px 15px 11px 20px;
     cursor: pointer; user-select: none;
   }
   .hd:active { cursor: grabbing; }
-  .name { font-weight: 650; letter-spacing: -0.01em; }
-  .ver, .sum { color: rgba(28,25,21,.55); font-size: 11px; }
+  .name { font-weight: 660; font-size: 14px; letter-spacing: -0.01em; }
+  .ver, .sum { color: rgba(28,25,21,.52); font-size: 11px; }
   .sum { display: none; }
   .chev {
     margin-left: auto;
-    padding: 4px 10px; border-radius: 999px;
-    font-size: 12px; font-weight: 650;
+    padding: 5px 11px 4px; border-radius: 999px;
+    font-size: 12px; font-weight: 660;
   }
   .wrap.collapsed .body { display: none; }
   .wrap.collapsed .ver { display: none; }
@@ -1042,128 +1248,148 @@
   .body::-webkit-scrollbar-corner,
   .list::-webkit-scrollbar-corner { background: transparent; }
   .seg {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
-    padding: 4px; border-radius: 18px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+    padding: 5px; border-radius: 20px;
     background: rgba(255,255,255,.1);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.55), inset 0 0 0 1px rgba(255,255,255,.28);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.6), inset 0 0 0 1px rgba(255,255,255,.28);
   }
   .seg button {
-    border: 0; color: rgba(22,19,15,.72);
-    border-radius: 14px; padding: 8px 8px 7px; cursor: pointer; line-height: 1.2;
+    border: 0; color: rgba(22,19,15,.7);
+    border-radius: 15px; padding: 8px 8px 7px; cursor: pointer; line-height: 1.2;
   }
-  .seg button small { display: block; font-size: 10px; letter-spacing: .04em; opacity: .72; }
-  .seg button.on,
-  .tag.on {
-    color: #16130f; font-weight: 650;
-    background-color: rgba(255,255,255,.32);
-    box-shadow:
-      inset 0 1px 1px #fff,
-      inset 0 0 0 1px rgba(255,255,255,.92),
-      inset 0 -18px 16px rgba(255,255,255,.42),
-      0 8px 16px rgba(22,19,15,.12);
-  }
-  .seg button:active { transform: scale(0.98); }
+  .seg button small { display: block; font-size: 10px; letter-spacing: .05em; opacity: .68; }
   .field {
     display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
-    min-height: 46px; padding: 8px;
-    background: linear-gradient(180deg, rgba(255,255,255,.28), rgba(255,255,255,.08));
-    border-radius: 18px; cursor: text;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.85), inset 0 0 0 1px rgba(255,255,255,.32);
+    min-height: 48px; padding: 8px 9px;
+    background: linear-gradient(180deg, rgba(255,255,255,.24), rgba(255,255,255,.06));
+    border-radius: 20px; cursor: text;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.85),
+      inset 0 0 0 1px rgba(255,255,255,.3),
+      inset 0 7px 13px -9px rgba(38,50,70,.34);
+    transition: box-shadow .18s ease;
   }
-  .field:focus-within { box-shadow: inset 0 1px 0 #fff, inset 0 0 0 1px rgba(255,255,255,.7); }
-  .chev, .chip, .tag, .jump, .clear, .pager button, .seg button {
-    position: relative;
-    overflow: hidden;
-    background-color: rgba(255,255,255,.08);
-    background-image:
-      linear-gradient(180deg, #fff 0%, rgba(255,255,255,.7) 28%, rgba(255,255,255,0) 56%),
-      linear-gradient(180deg, rgba(255,255,255,.1), rgba(42,54,74,.2));
-    background-repeat: no-repeat;
-    backdrop-filter: blur(18px) saturate(1.85);
-    -webkit-backdrop-filter: blur(18px) saturate(1.85);
+  .field:focus-within {
     box-shadow:
       inset 0 1px 0 #fff,
-      inset 0 -1px 0 rgba(42,54,74,.22),
       inset 0 0 0 1px rgba(255,255,255,.7),
-      inset 0 -16px 14px rgba(42,54,74,.1),
-      0 8px 16px rgba(22,19,15,.12);
+      inset 0 7px 15px -9px rgba(38,50,70,.38);
+  }
+
+  /* 玻璃基本面：没挂上折射时是磨砂，挂上之后由 backdrop-filter 折背景 */
+  .glassable {
+    position: relative;
+    overflow: hidden;
+    background-color: rgba(255,255,255,.1);
+    background-image: linear-gradient(180deg, rgba(255,255,255,.42), rgba(255,255,255,.06) 46%, rgba(255,255,255,0) 100%);
+    background-repeat: no-repeat;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.98),
+      inset 0 0 0 1px rgba(255,255,255,.44),
+      inset 0 -10px 15px -9px rgba(38,50,70,.24),
+      0 6px 14px -7px rgba(22,19,15,.3);
+    transition: transform .12s cubic-bezier(.2,.7,.3,1), box-shadow .18s ease, background-color .18s ease;
+  }
+  .glassable.refract {
+    background-color: rgba(255,255,255,.045);
+    background-image: linear-gradient(180deg, rgba(255,255,255,.3), rgba(255,255,255,.04) 44%, rgba(255,255,255,0) 100%);
+  }
+  .glassable:hover {
+    background-color: rgba(255,255,255,.2);
+    box-shadow:
+      inset 0 1px 0 #fff,
+      inset 0 0 0 1px rgba(255,255,255,.72),
+      inset 0 -10px 15px -9px rgba(38,50,70,.26),
+      0 9px 18px -8px rgba(22,19,15,.34);
+  }
+  .glassable:active:not(:disabled) { transform: scale(.972); }
+  .glassable:focus-visible { outline: 2px solid rgba(96,162,255,.9); outline-offset: 2px; }
+  .glassable:disabled { opacity: .4; cursor: default; }
+
+  .seg button.on,
+  .tag.on {
+    color: #16130f; font-weight: 660;
+    background-color: rgba(255,255,255,.44);
+    background-image: linear-gradient(180deg, rgba(255,255,255,.5), rgba(255,255,255,.06) 50%, rgba(255,255,255,0) 100%);
+    box-shadow:
+      inset 0 1px 0 #fff,
+      inset 0 0 0 1px rgba(255,255,255,.95),
+      inset 0 -15px 18px -8px rgba(64,120,180,.22),
+      0 8px 16px -7px rgba(22,19,15,.32);
   }
   .chip {
-    display: inline-flex; align-items: center; gap: 2px; max-width: 100%;
-    padding: 3px 4px 3px 9px; color: #1c1915;
-    border-radius: 999px; font-size: 12px; font-weight: 650;
+    display: inline-flex; align-items: center; gap: 3px; max-width: 100%;
+    padding: 3px 4px 3px 10px; color: #1c1915;
+    border-radius: 999px; font-size: 12px; font-weight: 660;
+    border: 0;
   }
-  .chip.away, .tag.away {
-    background-color: rgba(255,255,255,.05);
-    box-shadow:
-      inset 0 1px 0 rgba(255,255,255,.75),
-      inset 0 0 0 1px rgba(28,25,21,.28),
-      0 4px 10px rgba(22,19,15,.06);
-  }
-  .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
+  .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 176px; }
   .chip button {
-    width: 18px; height: 18px; border: 0; border-radius: 50%;
-    background: transparent; cursor: pointer; line-height: 1; padding: 0;
+    width: 19px; height: 19px; border: 0; border-radius: 50%;
+    display: grid; place-items: center; padding: 0;
+    color: #1c1915; background: rgba(255,255,255,.34);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.75);
+    cursor: pointer; line-height: 1; font-size: 12px;
+    transition: background-color .15s ease;
   }
-  .chip button:hover { background: rgba(255,255,255,.45); }
+  .chip button:hover { background: rgba(255,255,255,.68); }
+  .chip.away, .tag.away { opacity: .7; }
   .field input {
-    flex: 1; min-width: 120px; border: 0; outline: none;
+    flex: 1; min-width: 118px; border: 0; outline: none;
     background: transparent; padding: 4px 2px; font-size: 13px; color: #1c1915;
   }
-  .field input::placeholder { color: rgba(28,25,21,.45); }
-  .hint { min-height: 16px; font-size: 11px; color: rgba(28,25,21,.55); }
+  .field input::placeholder { color: rgba(28,25,21,.42); }
+  .hint { min-height: 16px; font-size: 11px; line-height: 1.5; color: rgba(28,25,21,.55); }
   .hint.note { color: #1c1915; }
-  .hint.warn { color: #7a4b12; }
+  .hint.warn { color: #8a4a06; }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .count { color: rgba(28,25,21,.62); font-size: 12px; }
-  .count b { color: #1c1915; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .count { color: rgba(28,25,21,.6); font-size: 12px; }
+  .count b { color: #1c1915; font-size: 18px; font-weight: 720; font-variant-numeric: tabular-nums; }
   .jump {
     border: 0; color: #1c1915;
-    cursor: pointer; font-size: 12px; font-weight: 650;
-    border-radius: 999px; padding: 6px 10px;
+    cursor: pointer; font-size: 12px; font-weight: 660;
+    border-radius: 999px; padding: 7px 12px 6px;
   }
-  .jump:disabled { opacity: .4; cursor: default; }
-  .jump:active:not(:disabled), .clear:active:not(:disabled), .tag:active, .pager button:active:not(:disabled) { transform: scale(0.98); }
   .pager { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .pager button {
-    border: 0; min-height: 44px; border-radius: 16px; cursor: pointer;
-    color: #16130f; font-size: 14px; font-weight: 650;
+    border: 0; min-height: 44px; border-radius: 17px; cursor: pointer;
+    color: #16130f; font-size: 14px; font-weight: 660;
   }
-  .pager button:disabled { opacity: .38; cursor: default; }
   .clear {
     width: 100%; border: 0; color: #16130f;
-    border-radius: 16px; min-height: 40px; padding: 8px 12px;
-    cursor: pointer; font-size: 13px; font-weight: 650;
+    border-radius: 17px; min-height: 42px; padding: 9px 12px;
+    cursor: pointer; font-size: 13px; font-weight: 660;
   }
-  .clear:disabled { opacity: .38; cursor: default; }
   .list {
     display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start;
-    max-height: 42vh; overflow: auto;
-    padding-right: 2px;
+    max-height: 40vh; overflow: auto;
+    padding: 3px;
     scrollbar-width: thin;
-    scrollbar-color: rgba(22,19,15,.35) transparent;
+    scrollbar-color: rgba(22,19,15,.32) transparent;
   }
   .tag {
     display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
     border: 0; color: #1c1915;
-    border-radius: 999px; padding: 5px 9px; cursor: pointer; font-size: 12px;
+    border-radius: 999px; padding: 5px 10px 5px 11px; cursor: pointer; font-size: 12px;
   }
-  .tag .n { color: rgba(28,25,21,.5); font-size: 10px; font-variant-numeric: tabular-nums; }
+  .tag .n { color: rgba(28,25,21,.48); font-size: 10px; font-variant-numeric: tabular-nums; }
   .tag.on .n { color: rgba(28,25,21,.55); }
   .tag.hot {
     box-shadow:
       inset 0 1px 0 #fff,
-      inset 0 0 0 1px rgba(255,255,255,.95),
-      inset 0 -12px 14px rgba(255,255,255,.24),
-      0 6px 14px rgba(22,19,15,.1);
+      inset 0 0 0 1px rgba(255,255,255,.98),
+      inset 0 -12px 15px -8px rgba(38,50,70,.2),
+      0 0 0 2px rgba(96,162,255,.22),
+      0 6px 14px -7px rgba(22,19,15,.28);
   }
-  .tag.dim { opacity: .45; }
+  .tag.dim { opacity: .42; }
   .tag kbd {
-    font-family: inherit; font-size: 10px; padding: 0 4px; border-radius: 4px;
-    background: rgba(255,255,255,.45); color: #1c1915;
+    font-family: inherit; font-size: 10px; padding: 1px 5px; border-radius: 6px;
+    background: rgba(255,255,255,.55); color: #1c1915;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.9);
   }
-  .empty { color: rgba(28,25,21,.62); font-size: 12px; padding: 8px 2px; }
-  .foot { font-size: 11px; color: rgba(22,19,15,.58); line-height: 1.4; }
+  .empty { color: rgba(28,25,21,.6); font-size: 12px; padding: 8px 2px; }
+  .foot { margin: 0; font-size: 11px; color: rgba(22,19,15,.56); line-height: 1.45; }
   `;
 
   const PAGE_CSS = `
@@ -1244,12 +1470,12 @@
         <span class="name">标签透镜</span>
         <span class="ver">v${VERSION}</span>
         <span class="sum"></span>
-        <span class="chev">收起</span>
+        <span class="chev glassable">收起</span>
       </div>
       <div class="body">
         <div class="seg">
-          <button type="button" data-act="logic" data-v="and">同时要<small>AND</small></button>
-          <button type="button" data-act="logic" data-v="or">有一个就行<small>OR</small></button>
+          <button type="button" class="glassable" data-act="logic" data-v="and">同时要<small>AND</small></button>
+          <button type="button" class="glassable" data-act="logic" data-v="or">有一个就行<small>OR</small></button>
         </div>
         <div class="field">
           <span class="chips"></span>
@@ -1258,15 +1484,15 @@
         <div class="hint"></div>
         <div class="row">
           <div class="count"></div>
-          <button class="jump" type="button" data-act="jump">跳到下一本</button>
+          <button class="jump glassable" type="button" data-act="jump">跳到下一本</button>
         </div>
         <div class="pager">
-          <button type="button" data-act="page" data-dir="prev">上一页</button>
-          <button type="button" data-act="page" data-dir="next">下一页</button>
+          <button type="button" class="glassable" data-act="page" data-dir="prev">上一页</button>
+          <button type="button" class="glassable" data-act="page" data-dir="next">下一页</button>
         </div>
         <div class="list"></div>
         <p class="foot">不分大小写，简繁算同一个。这一页没有的词也会记下。</p>
-        <button class="clear" type="button" data-act="reset">清空已选</button>
+        <button class="clear glassable" type="button" data-act="reset">清空已选</button>
       </div>
     `;
     root.appendChild(wrap);
@@ -1276,6 +1502,7 @@
       host,
       root,
       panel: wrap,
+      lab: createGlassLab(root),
       chips: wrap.querySelector('.chips'),
       listBox: wrap.querySelector('.list'),
       statusBox: wrap.querySelector('.count'),
@@ -1288,7 +1515,8 @@
       pagerPrev: wrap.querySelector('[data-dir="prev"]'),
       pagerNext: wrap.querySelector('[data-dir="next"]'),
     };
-    mountGlass(root, wrap.querySelector('.plate'));
+    ui.lab.mountPanel(wrap.querySelector('.plate'));
+    ui.lab.watch(wrap.querySelectorAll('.glassable'), { group: 'chrome', sync: 99 });
 
     let composing = false;
     ui.kwInput.addEventListener('compositionstart', () => { composing = true; });
@@ -1431,7 +1659,7 @@
     ui.chips.replaceChildren();
     picks.forEach((key) => {
       const chip = document.createElement('span');
-      chip.className = 'chip' + (state.tagIndex.has(key) ? '' : ' away');
+      chip.className = 'chip glassable' + (state.tagIndex.has(key) ? '' : ' away');
       if (!state.tagIndex.has(key)) chip.title = '本页还没有，已记下';
       const name = document.createElement('span');
       name.textContent = labelOf(key);
@@ -1445,6 +1673,7 @@
       chip.appendChild(x);
       ui.chips.appendChild(chip);
     });
+    if (ui.lab) ui.lab.watch(ui.chips.children, { group: 'chips', replace: true, sync: 24 });
   }
 
   function renderHint() {
@@ -1462,6 +1691,7 @@
     const tags = orderedTags();
     const target = enterTarget(tags);
     ui.listBox.replaceChildren();
+    if (ui.lab) ui.lab.release('tags');
 
     if (!tags.length) {
       const empty = document.createElement('div');
@@ -1475,7 +1705,7 @@
       const hot = q && rank(t.key, q) < 3;
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'tag';
+      btn.className = 'tag glassable';
       btn.dataset.act = 'pick';
       btn.dataset.key = t.key;
       if (picks.includes(t.key)) btn.classList.add('on');
@@ -1500,6 +1730,7 @@
       ui.listBox.appendChild(btn);
     });
     ui.listBox.scrollTop = keep ? top : 0;
+    if (ui.lab) ui.lab.watch(ui.listBox.children, { group: 'tags', sync: 48 });
   }
 
   function renderStatus() {
@@ -1547,10 +1778,12 @@
   function destroyUI() {
     restoreOrder();
     clearMarks();
+    if (ui.lab) ui.lab.destroy();
     if (ui.host) {
       ui.host.remove();
       ui.host = null;
     }
+    ui = {};
   }
 
   function boot(allowEmpty) {
