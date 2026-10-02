@@ -2,7 +2,7 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.13
+// @version      0.2.14
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  记下要找的标签，在当前页把对上的漫画亮出来。本页没有的标签也会保存，换页后继续对。不分大小写，简体繁体视为同一个。
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.13';
+  const VERSION = '0.2.14';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -585,8 +585,58 @@
     tagSnap.clear();
   }
 
+  function clearHaloFit() {
+    qsa(document, '[data-mtl-halo]').forEach((el) => {
+      ['margin-top', 'margin-right', 'margin-bottom', 'margin-left'].forEach((prop) => {
+        el.style.removeProperty(prop);
+      });
+      el.removeAttribute('data-mtl-halo');
+    });
+  }
+
+  /** 高光画出卡片外沿多少像素。用来把间距补回去。 */
+  function haloPx(el) {
+    const cs = getComputedStyle(el);
+    const edge = (parseFloat(cs.outlineOffset) || 0) + (parseFloat(cs.outlineWidth) || 0);
+    let spread = 0;
+    String(cs.boxShadow || '').split(/,(?![^(]*\))/).forEach((part) => {
+      if (/inset/.test(part)) return;
+      const nums = part.match(/-?\d+(?:\.\d+)?px/g);
+      if (!nums || nums.length < 4) return;
+      const sp = parseFloat(nums[3]);
+      if (sp > spread) spread = sp;
+    });
+    return Math.ceil(Math.max(edge, spread, 0));
+  }
+
+  function applyHaloFit() {
+    state.items.forEach((it) => {
+      const el = it.el;
+      if (!el) return;
+      if (!it.hit) return;
+      let base;
+      try { base = JSON.parse(el.getAttribute('data-mtl-halo') || ''); } catch (e) { base = null; }
+      if (!base) {
+        const cs = getComputedStyle(el);
+        base = {
+          mt: parseFloat(cs.marginTop) || 0,
+          mr: parseFloat(cs.marginRight) || 0,
+          mb: parseFloat(cs.marginBottom) || 0,
+          ml: parseFloat(cs.marginLeft) || 0,
+        };
+        el.setAttribute('data-mtl-halo', JSON.stringify(base));
+      }
+      const h = haloPx(el);
+      el.style.setProperty('margin-top', (base.mt + h) + 'px', 'important');
+      el.style.setProperty('margin-right', (base.mr + h) + 'px', 'important');
+      el.style.setProperty('margin-bottom', (base.mb + h) + 'px', 'important');
+      el.style.setProperty('margin-left', (base.ml + h) + 'px', 'important');
+    });
+  }
+
   function clearMarks() {
     restoreTagOrder();
+    clearHaloFit();
     qsa(document, '[data-mtl]').forEach((el) => el.removeAttribute('data-mtl'));
     qsa(document, '[data-mtl-tag]').forEach((el) => el.removeAttribute('data-mtl-tag'));
     qsa(document, '[data-mtl-focus]').forEach((el) => {
@@ -658,6 +708,7 @@
     reorderHits();
     state.matched = active ? matched : state.total;
     markFocus();
+    applyHaloFit();
     renderStatus();
   }
 
@@ -1032,14 +1083,18 @@
     box-shadow: inset 0 1px 0 rgba(255,255,255,.55), inset 0 0 0 1px rgba(255,255,255,.28);
   }
   .seg button {
-    border: 0; background: transparent; color: rgba(22,19,15,.72);
+    border: 0; color: rgba(22,19,15,.72);
     border-radius: 14px; padding: 8px 8px 7px; cursor: pointer; line-height: 1.2;
   }
   .seg button small { display: block; font-size: 10px; letter-spacing: .04em; opacity: .72; }
   .seg button.on {
     color: #16130f; font-weight: 650;
-    background: linear-gradient(180deg, rgba(255,255,255,.78), rgba(255,255,255,.28));
-    box-shadow: inset 0 1px 0 #fff, inset 0 -10px 14px rgba(255,255,255,.2), 0 6px 14px rgba(0,0,0,.08);
+    background: linear-gradient(180deg, rgba(255,255,255,.82), rgba(255,255,255,.34));
+    box-shadow:
+      inset 0 1px 0 #fff,
+      inset 0 0 0 1px rgba(255,255,255,.8),
+      inset 0 -12px 16px rgba(255,255,255,.35),
+      0 8px 16px rgba(0,0,0,.08);
   }
   .seg button:active { transform: scale(0.98); }
   .field {
@@ -1050,9 +1105,33 @@
     box-shadow: inset 0 1px 0 rgba(255,255,255,.85), inset 0 0 0 1px rgba(255,255,255,.32);
   }
   .field:focus-within { box-shadow: inset 0 1px 0 #fff, inset 0 0 0 1px rgba(255,255,255,.7); }
-  .chip, .tag, .jump, .clear, .pager button {
+  .chip, .tag {
     background: linear-gradient(180deg, rgba(255,255,255,.5), rgba(255,255,255,.12));
     box-shadow: inset 0 1px 0 rgba(255,255,255,.95), inset 0 -8px 12px rgba(255,255,255,.1), 0 1px 1px rgba(0,0,0,.04);
+  }
+  .jump, .clear, .pager button, .seg button {
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(180deg, rgba(255,255,255,.28), rgba(255,255,255,.06) 46%, rgba(255,255,255,.2));
+    backdrop-filter: blur(22px) saturate(1.9);
+    -webkit-backdrop-filter: blur(22px) saturate(1.9);
+    box-shadow:
+      inset 0 1px 0 #fff,
+      inset 0 0 0 1px rgba(255,255,255,.72),
+      inset 0 -18px 20px rgba(255,255,255,.22),
+      0 10px 18px rgba(20,16,12,.1);
+  }
+  .jump::before, .clear::before, .pager button::before, .seg button::before {
+    content: "";
+    position: absolute;
+    left: 1px;
+    right: 1px;
+    top: 0;
+    height: 52%;
+    border-radius: inherit;
+    background: linear-gradient(180deg, rgba(255,255,255,.78), rgba(255,255,255,0));
+    pointer-events: none;
+    z-index: -1;
   }
   .chip {
     display: inline-flex; align-items: center; gap: 2px; max-width: 100%;
@@ -1132,23 +1211,21 @@
   [data-mtl="hit"] {
     border-radius: 18px !important;
     outline: 1px solid rgba(255,255,255,.95) !important;
-    outline-offset: 2px !important;
+    outline-offset: 3px !important;
     box-shadow:
       inset 0 1px 0 rgba(255,255,255,.7),
       inset 0 0 22px rgba(255, 176, 64, .22),
       0 0 0 1px rgba(255, 196, 110, .9),
-      0 0 0 3px rgba(255, 160, 48, .22),
-      0 0 12px rgba(255, 150, 40, .28) !important;
+      0 0 0 4px rgba(255, 160, 48, .22) !important;
   }
   [data-mtl-focus="1"] {
     outline: 1.5px solid #fff !important;
-    outline-offset: 4px !important;
+    outline-offset: 3px !important;
     box-shadow:
       inset 0 1px 0 rgba(255,255,255,.85),
       inset 0 0 26px rgba(120, 210, 255, .38),
       0 0 0 1px rgba(170, 230, 255, .95),
-      0 0 0 5px rgba(90, 190, 255, .3),
-      0 0 18px rgba(80, 180, 255, .45) !important;
+      0 0 0 4px rgba(90, 190, 255, .34) !important;
     position: relative !important;
     z-index: 4 !important;
   }
