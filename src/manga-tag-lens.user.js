@@ -2,7 +2,7 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.19
+// @version      0.2.20
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  记下要找的标签，在当前页把对上的漫画亮出来。本页没有的标签也会保存，换页后继续对。不分大小写，简体繁体视为同一个。
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.19';
+  const VERSION = '0.2.20';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -863,9 +863,9 @@
   }
 
   const GLASS_DEFAULTS = {
-    radiusCss: 40,      // 圆角，元素像素
+    radiusCss: 44,      // 圆角，元素像素。要跟 .wrap 的 border-radius 对上，折光才贴边
     radiusMin: 16,
-    bezelCss: 26,       // 折光带宽度，元素像素。窄一点梯度更陡，边缘像透镜而不是糊了一圈
+    bezelCss: 26,       // 折光带宽度。窄一点梯度更陡，边缘像透镜而不是糊了一圈
     bezelMin: 12,
     depth: 78,          // 玻璃厚度，只影响折光的分布
     ior: 3.0,           // 折射率，越大边缘扭得越狠
@@ -875,10 +875,13 @@
     // 只把元素本身那块背景交给滤镜，取样超过元素右侧 scale/2 处就露馅，表现为一条竖线。
     // 峰值位移按折光带宽度封顶，竖线就落到看不见的地方。
     capBezel: 1.1,      // 峰值位移 ≤ 折光带宽度 × capBezel
-    saturate: 4,        // 折光带里提一点饱和度
-    specFade: 0.9,      // 高光强度
-    specGain: 2.5,      // 高光带宽度 = bezel × specGain
-    blur: 1.6,          // 背景先糊一下，像磨砂；太糊就只剩一层透明，看不出玻璃
+    saturate: 1.5,      // 整面提一点饱和，封面颜色透过玻璃还活着。4 会做成霓虹边
+    specFade: 0.5,      // 高光强度。用 screen 叠在边上，不要铺到整面
+    specGain: 2.2,      // 高光带宽度 = bezel × specGain
+    // 边缘折光用这一档轻糊，才能看得出后面的条纹在弯。
+    blur: 2.4,
+    // 中间模身另糊一档。0 表示整块都走折光（按钮太小，糊两层看不出来）。
+    bodyBlur: 14,
     maxPixels: 280 * 360,
   };
 
@@ -965,18 +968,31 @@
     const capScale = Math.max(6, o.bezelCss * (o.capBezel == null ? 0.85 : o.capBezel));
     const scale = Math.min(rawScale, capScale);
     const stretch = 'x="0" y="0" width="100%" height="100%" preserveAspectRatio="none"';
+    const bodyBlur = o.bodyBlur > 0
+      ? `<feGaussianBlur in="SourceGraphic" stdDeviation="${o.bodyBlur}" result="frost"/>
+      <feColorMatrix in="frost" type="saturate" values="${o.saturate}" result="frost_sat"/>
+      <feComponentTransfer in="disp_map" result="edge_from_disp">
+        <feFuncR type="table" tableValues="1 0 1"/>
+        <feFuncG type="table" tableValues="1 0 1"/>
+        <feFuncB type="discrete" tableValues="0"/>
+        <feFuncA type="discrete" tableValues="1"/>
+      </feComponentTransfer>
+      <feColorMatrix in="edge_from_disp" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  1 1 0 0 0" result="bezel_raw"/>
+      <feGaussianBlur in="bezel_raw" stdDeviation="2.2" result="bezel_mask"/>
+      <feComposite in="lively" in2="bezel_mask" operator="in" result="rim_glass"/>
+      <feBlend in="rim_glass" in2="frost_sat" mode="normal" result="body"/>`
+      : `<feMerge result="body"><feMergeNode in="lively"/></feMerge>`;
     return `<filter id="${id}" x="0%" y="0%" width="100%" height="100%" color-interpolation-filters="sRGB">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="${o.blur}" result="blurred_source"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="${o.blur}" result="crisp"/>
       <feImage href="${dispUrl}" ${stretch} result="disp_map"/>
-      <feDisplacementMap in="blurred_source" in2="disp_map" scale="${scale}" xChannelSelector="R" yChannelSelector="G" result="displaced"/>
-      <feColorMatrix in="displaced" type="saturate" values="${o.saturate}" result="displaced_sat"/>
+      <feDisplacementMap in="crisp" in2="disp_map" scale="${scale}" xChannelSelector="R" yChannelSelector="G" result="displaced"/>
+      <feColorMatrix in="displaced" type="saturate" values="${Math.max(o.saturate, 1.35)}" result="lively"/>
+      ${bodyBlur}
       <feImage href="${specUrl}" ${stretch} result="spec_layer"/>
-      <feComposite in="displaced_sat" in2="spec_layer" operator="in" result="spec_masked"/>
       <feComponentTransfer in="spec_layer" result="spec_faded">
         <feFuncA type="linear" slope="${o.specFade}"/>
       </feComponentTransfer>
-      <feBlend in="spec_masked" in2="displaced" mode="normal" result="with_sat"/>
-      <feBlend in="spec_faded" in2="with_sat" mode="normal"/>
+      <feBlend in="spec_faded" in2="body" mode="screen"/>
     </filter>`;
   }
 
@@ -1008,10 +1024,11 @@
         depth: Math.max(8, s * 0.85),
         ior: 2.55,
         dispPx: Math.max(2, Math.min(16, s * 0.26)),
-        saturate: 3,
-        specFade: 0.62,
+        saturate: 1.8,
+        specFade: 0.42,
         specGain: 2.2,
-        blur: Math.max(0.6, Math.min(2.4, s * 0.07)),
+        blur: Math.max(1.2, Math.min(4.5, s * 0.12)),
+        bodyBlur: 0,
         maxPixels: 160 * 160,
       };
     }
@@ -1160,7 +1177,17 @@
         last = key;
         try {
           const id = 'mtl-panel-' + (++panelSeq);
-          defs.insertAdjacentHTML('beforeend', buildGlassFilter(id, w, h, {}));
+          let radiusCss = GLASS_DEFAULTS.radiusCss;
+          try {
+            const raw = getComputedStyle(plate).borderTopLeftRadius
+              || (plate.parentElement && getComputedStyle(plate.parentElement).borderTopLeftRadius);
+            const parsed = parseFloat(raw);
+            if (parsed > 0) radiusCss = parsed;
+          } catch (e) { /* 用默认圆角 */ }
+          defs.insertAdjacentHTML('beforeend', buildGlassFilter(id, w, h, {
+            radiusCss,
+            radiusMin: Math.min(16, Math.max(8, Math.round(radiusCss / 2))),
+          }));
           plate.style.backdropFilter = 'url(#' + id + ')';
           plate.style.webkitBackdropFilter = 'url(#' + id + ')';
           plate.classList.add('refract');
@@ -1204,10 +1231,12 @@
     max-height: calc(100vh - 32px);
     display: flex; flex-direction: column;
     color: #16130f;
-    border-radius: 38px;
+    background: transparent;
+    border-radius: 44px;
     box-shadow:
-      0 18px 44px -14px rgba(22,19,15,.44),
-      0 3px 10px -4px rgba(22,19,15,.2);
+      0 22px 50px -16px rgba(22,19,15,.48),
+      0 4px 14px -6px rgba(22,19,15,.22),
+      0 0 0 0.5px rgba(255,255,255,.38);
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
     font-size: 13px; line-height: 1.45;
     overflow: hidden;
@@ -1215,32 +1244,31 @@
   }
   .plate {
     position: absolute; inset: 0; z-index: 0; border-radius: inherit; pointer-events: none;
-    background: rgba(255,255,255,.16);
-    box-shadow: inset 0 0 26px -9px rgba(255,255,255,.7);
-    backdrop-filter: blur(22px) saturate(1.8);
-    -webkit-backdrop-filter: blur(22px) saturate(1.8);
+    /* 玻璃本身没有颜色，靠磨砂把后面的封面揉进来。白膜一厚就成塑料。 */
+    background: rgba(255,255,255,.07);
+    box-shadow: inset 0 0 18px -10px rgba(255,255,255,.42);
+    backdrop-filter: blur(22px) saturate(1.45);
+    -webkit-backdrop-filter: blur(22px) saturate(1.45);
   }
   .plate.refract {
-    /* 染色 6% 太淡：面板压在什么颜色上，字就跟着什么颜色走，深浅全靠运气。
-       加到 12%，玻璃后面是什么样还看得见，但字的底子稳定了。 */
-    background: rgba(255,255,255,.12);
+    background: rgba(255,255,255,.05);
     box-shadow:
-      inset 0 0 30px -10px rgba(255,255,255,.6),
-      inset 0 0 20px -5px rgba(24,20,16,.22);
+      inset 0 0 22px -12px rgba(255,255,255,.38),
+      inset 0 -18px 24px -18px rgba(24,20,16,.16);
   }
   .lip {
     position: absolute; inset: 0; z-index: 2; pointer-events: none; border-radius: inherit;
-    /* 高光按「光从左上来」分强弱：顶边最亮，左边次之，右下几乎不亮。
-       整圈一个亮度会显得是塑料壳，不是玻璃。 */
+    /* 高光只贴边：顶边最亮，左边次之，右下几乎不亮。
+       大面积白渐变会把磨砂盖掉，玻璃就没了。 */
     box-shadow:
-      inset 0 1.2px 0 rgba(255,255,255,.95),
-      inset 1.2px 0 0 rgba(255,255,255,.5),
-      inset -1px 0 0 rgba(255,255,255,.14),
-      inset 0 -1px 0 rgba(255,255,255,.12),
-      inset 0 -22px 28px -20px rgba(38,50,70,.26);
+      inset 0 1.2px 0 rgba(255,255,255,.88),
+      inset 1px 0 0 rgba(255,255,255,.32),
+      inset -0.8px 0 0 rgba(255,255,255,.1),
+      inset 0 -0.8px 0 rgba(255,255,255,.08),
+      inset 0 -20px 26px -20px rgba(38,50,70,.2);
     background:
-      linear-gradient(152deg, rgba(255,255,255,.44), rgba(255,255,255,0) 30%),
-      linear-gradient(180deg, rgba(255,255,255,.22), rgba(255,255,255,0) 18%);
+      linear-gradient(155deg, rgba(255,255,255,.22), rgba(255,255,255,0) 18%),
+      linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,0) 12%);
   }
   .hd, .body {
     position: relative; z-index: 3;
@@ -1266,7 +1294,7 @@
   .wrap.collapsed .ver { display: none; }
   .wrap.collapsed .sum { display: inline; }
   .body {
-    padding: 0 16px 16px;
+    padding: 0 16px 18px;
     display: flex; flex-direction: column; gap: 10px;
     overflow: auto;
     scrollbar-width: thin;
@@ -1289,59 +1317,71 @@
   .body::-webkit-scrollbar-corner,
   .list::-webkit-scrollbar-corner { background: transparent; }
   .seg {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
-    padding: 5px; border-radius: 20px;
-    background: rgba(255,255,255,.1);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.6), inset 0 0 0 1px rgba(255,255,255,.28);
+    display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
+    padding: 4px; border-radius: 999px;
+    background: rgba(255,255,255,.06);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.42),
+      inset 1px 0 0 rgba(255,255,255,.18),
+      inset -0.8px 0 0 rgba(255,255,255,.08),
+      inset 0 -0.8px 0 rgba(255,255,255,.08);
   }
   .seg button {
     border: 0; color: rgba(22,19,15,.7);
-    border-radius: 15px; padding: 8px 8px 7px; cursor: pointer; line-height: 1.2;
+    border-radius: 999px; min-height: 44px; padding: 8px 10px 7px; cursor: pointer; line-height: 1.2;
   }
   .seg button small { display: block; font-size: 10px; letter-spacing: .05em; opacity: .68; }
   .field {
     display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
-    min-height: 48px; padding: 8px 9px;
-    background: linear-gradient(180deg, rgba(255,255,255,.24), rgba(255,255,255,.06));
-    border-radius: 20px; cursor: text;
+    min-height: 48px; padding: 8px 12px;
+    background: rgba(255,255,255,.06);
+    border-radius: 999px; cursor: text;
     box-shadow:
-      inset 0 1px 0 rgba(255,255,255,.85),
-      inset 0 0 0 1px rgba(255,255,255,.3),
-      inset 0 7px 13px -9px rgba(38,50,70,.34);
+      inset 0 1px 0 rgba(255,255,255,.55),
+      inset 1px 0 0 rgba(255,255,255,.2),
+      inset -0.8px 0 0 rgba(255,255,255,.08),
+      inset 0 -0.8px 0 rgba(255,255,255,.08),
+      inset 0 8px 14px -10px rgba(38,50,70,.28);
     transition: box-shadow .18s ease;
   }
   .field:focus-within {
     box-shadow:
-      inset 0 1px 0 #fff,
-      inset 0 0 0 1px rgba(255,255,255,.7),
-      inset 0 7px 15px -9px rgba(38,50,70,.38);
+      inset 0 1px 0 rgba(255,255,255,.85),
+      inset 0 0 0 1px rgba(255,255,255,.42),
+      inset 0 8px 16px -10px rgba(38,50,70,.32);
   }
 
-  /* 玻璃基本面：没挂上折射时是磨砂，挂上之后由 backdrop-filter 折背景 */
+  /* 玻璃基本面：没挂上折射时是磨砂，挂上之后由 backdrop-filter 折背景。
+     不要 overflow:hidden —— 会把外圈投影裁掉，按钮就贴死在面板上。 */
   .glassable {
     position: relative;
-    overflow: hidden;
     background-color: rgba(255,255,255,.1);
-    background-image: linear-gradient(180deg, rgba(255,255,255,.42), rgba(255,255,255,.06) 46%, rgba(255,255,255,0) 100%);
+    background-image: linear-gradient(180deg, rgba(255,255,255,.32), rgba(255,255,255,.05) 42%, rgba(255,255,255,0) 100%);
     background-repeat: no-repeat;
     box-shadow:
-      inset 0 1px 0 rgba(255,255,255,.98),
-      inset 0 0 0 1px rgba(255,255,255,.44),
-      inset 0 -10px 15px -9px rgba(38,50,70,.24),
-      0 6px 14px -7px rgba(22,19,15,.3);
-    transition: transform .12s cubic-bezier(.2,.7,.3,1), box-shadow .18s ease, background-color .18s ease;
+      inset 0 1px 0 rgba(255,255,255,.82),
+      inset 1px 0 0 rgba(255,255,255,.28),
+      inset -0.8px 0 0 rgba(255,255,255,.1),
+      inset 0 -0.8px 0 rgba(255,255,255,.08),
+      inset 0 -8px 12px -8px rgba(38,50,70,.16),
+      0 6px 14px -8px rgba(22,19,15,.22);
+    transition: transform .16s cubic-bezier(.23,1,.32,1), box-shadow .18s ease, background-color .18s ease;
   }
   .glassable.refract {
-    background-color: rgba(255,255,255,.045);
-    background-image: linear-gradient(180deg, rgba(255,255,255,.3), rgba(255,255,255,.04) 44%, rgba(255,255,255,0) 100%);
+    background-color: rgba(255,255,255,.03);
+    background-image: linear-gradient(180deg, rgba(255,255,255,.2), rgba(255,255,255,.03) 40%, rgba(255,255,255,0) 100%);
   }
-  .glassable:hover {
-    background-color: rgba(255,255,255,.2);
-    box-shadow:
-      inset 0 1px 0 #fff,
-      inset 0 0 0 1px rgba(255,255,255,.72),
-      inset 0 -10px 15px -9px rgba(38,50,70,.26),
-      0 9px 18px -8px rgba(22,19,15,.34);
+  @media (hover: hover) and (pointer: fine) {
+    .glassable:hover {
+      background-color: rgba(255,255,255,.14);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.95),
+        inset 1px 0 0 rgba(255,255,255,.4),
+        inset -0.8px 0 0 rgba(255,255,255,.12),
+        inset 0 -0.8px 0 rgba(255,255,255,.1),
+        inset 0 -8px 12px -8px rgba(38,50,70,.18),
+        0 8px 16px -8px rgba(22,19,15,.26);
+    }
   }
   .glassable:active:not(:disabled) { transform: scale(.972); }
   .glassable:focus-visible { outline: 2px solid rgba(96,162,255,.9); outline-offset: 2px; }
@@ -1350,19 +1390,21 @@
   .seg button.on,
   .tag.on {
     color: #16130f; font-weight: 660;
-    background-color: rgba(255,255,255,.44);
-    background-image: linear-gradient(180deg, rgba(255,255,255,.5), rgba(255,255,255,.06) 50%, rgba(255,255,255,0) 100%);
+    background-color: rgba(255,255,255,.28);
+    background-image: linear-gradient(180deg, rgba(255,255,255,.36), rgba(255,255,255,.05) 50%, rgba(255,255,255,0) 100%);
     box-shadow:
-      inset 0 1px 0 #fff,
-      inset 0 0 0 1px rgba(255,255,255,.95),
-      inset 0 -15px 18px -8px rgba(64,120,180,.22),
-      0 8px 16px -7px rgba(22,19,15,.32);
+      inset 0 1px 0 rgba(255,255,255,.95),
+      inset 1px 0 0 rgba(255,255,255,.42),
+      inset -0.8px 0 0 rgba(255,255,255,.14),
+      inset 0 -0.8px 0 rgba(255,255,255,.1),
+      inset 0 -12px 16px -8px rgba(64,120,180,.16),
+      0 6px 14px -8px rgba(22,19,15,.22);
   }
   .chip {
     display: inline-flex; align-items: center; gap: 3px; max-width: 100%;
     padding: 3px 4px 3px 10px; color: #1c1915;
     border-radius: 999px; font-size: 12px; font-weight: 660;
-    border: 0;
+    border: 0; overflow: hidden;
   }
   .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 176px; }
   .chip button {
@@ -1394,12 +1436,12 @@
   }
   .pager { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .pager button {
-    border: 0; min-height: 44px; border-radius: 17px; cursor: pointer;
+    border: 0; min-height: 44px; border-radius: 999px; cursor: pointer;
     color: #16130f; font-size: 14px; font-weight: 660;
   }
   .clear {
     width: 100%; border: 0; color: #16130f;
-    border-radius: 17px; min-height: 42px; padding: 9px 12px;
+    border-radius: 999px; min-height: 44px; padding: 10px 14px;
     cursor: pointer; font-size: 13px; font-weight: 660;
   }
   .list {
@@ -1412,26 +1454,51 @@
   .tag {
     display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
     border: 0; color: #1c1915;
-    border-radius: 999px; padding: 5px 10px 5px 11px; cursor: pointer; font-size: 12px;
+    border-radius: 999px; padding: 6px 12px 6px 13px; cursor: pointer; font-size: 12px;
+    overflow: hidden;
+  }
+  .tag > span:first-child {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 148px;
   }
   .tag .n { color: rgba(28,25,21,.48); font-size: 10px; font-variant-numeric: tabular-nums; }
   .tag.on .n { color: rgba(28,25,21,.55); }
   .tag.hot {
     box-shadow:
-      inset 0 1px 0 #fff,
-      inset 0 0 0 1px rgba(255,255,255,.98),
-      inset 0 -12px 15px -8px rgba(38,50,70,.2),
+      inset 0 1px 0 rgba(255,255,255,.95),
+      inset 1px 0 0 rgba(255,255,255,.4),
+      inset -0.8px 0 0 rgba(255,255,255,.12),
+      inset 0 -0.8px 0 rgba(255,255,255,.1),
+      inset 0 -10px 14px -8px rgba(38,50,70,.16),
       0 0 0 2px rgba(96,162,255,.22),
-      0 6px 14px -7px rgba(22,19,15,.28);
+      0 6px 14px -8px rgba(22,19,15,.22);
   }
   .tag.dim { opacity: .42; }
   .tag kbd {
-    font-family: inherit; font-size: 10px; padding: 1px 5px; border-radius: 6px;
-    background: rgba(255,255,255,.55); color: #1c1915;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.9);
+    font-family: inherit; font-size: 10px; padding: 2px 7px; border-radius: 999px;
+    background: rgba(255,255,255,.4); color: #1c1915;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.85);
   }
   .empty { color: rgba(28,25,21,.6); font-size: 12px; padding: 8px 2px; }
   .foot { margin: 0; font-size: 11px; color: rgba(22,19,15,.56); line-height: 1.45; }
+  @media (prefers-reduced-transparency: reduce) {
+    .plate, .plate.refract {
+      background: rgba(250,246,240,.94);
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+      box-shadow: none;
+    }
+    .glassable, .glassable.refract {
+      background-color: rgba(255,255,255,.78);
+      background-image: none;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+    .lip { background: none; }
+  }
+  @media (prefers-contrast: more) {
+    .wrap { box-shadow: 0 0 0 2px #16130f, 0 22px 50px -16px rgba(22,19,15,.48); }
+    .glassable { box-shadow: inset 0 0 0 1.5px rgba(22,19,15,.55); }
+  }
   `;
 
   const PAGE_CSS = `
