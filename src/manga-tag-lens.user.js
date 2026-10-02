@@ -2,7 +2,7 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.11
+// @version      0.2.12
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  记下要找的标签，在当前页把对上的漫画亮出来。本页没有的标签也会保存，换页后继续对。不分大小写，简体繁体视为同一个。
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.11';
+  const VERSION = '0.2.12';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -416,12 +416,16 @@
     trackSnap.clear();
   }
 
-  function settleTrack(parent) {
-    if (!parent || !parent.classList) return;
-    const track = parent.classList.contains('owl-stage')
+  function isTrack(parent) {
+    return !!(parent && parent.classList && (
+      parent.classList.contains('owl-stage')
       || parent.classList.contains('swiper-wrapper')
-      || parent.classList.contains('slick-track');
-    if (!track) return;
+      || parent.classList.contains('slick-track')
+    ));
+  }
+
+  function settleTrack(parent) {
+    if (!isTrack(parent)) return;
     if (!trackSnap.has(parent)) {
       trackSnap.set(parent, {
         transform: parent.style.transform || '',
@@ -435,6 +439,34 @@
         parent.appendChild(node);
       }
     });
+  }
+
+  function placeNodes(parent, nodes) {
+    nodes.forEach((node) => {
+      if (node) parent.appendChild(node);
+    });
+  }
+
+  /** 同一父节点里，对上的格子排到最前，其余保持原来的相对顺序。 */
+  function reorderWithin(parent) {
+    const base = layoutSnap.get(parent);
+    if (!base) return;
+    const hitCells = new Set(state.items.filter((it) => it.hit && it.cell && it.cell.parentElement).map((it) => it.cell));
+    const hits = [];
+    const rest = [];
+    base.forEach((node) => {
+      if (hitCells.has(node)) hits.push(node);
+      else rest.push(node);
+    });
+    placeNodes(parent, hits.concat(rest));
+  }
+
+  function docBefore(a, b) {
+    if (a === b) return 0;
+    const pos = a.compareDocumentPosition(b);
+    if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+    if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+    return 0;
   }
 
   function reorderHits() {
@@ -451,17 +483,93 @@
     });
     groups.forEach((list, parent) => {
       if (!layoutSnap.has(parent)) layoutSnap.set(parent, Array.from(parent.children));
-      const base = layoutSnap.get(parent);
-      const hitCells = new Set(list.filter((it) => it.hit).map((it) => it.cell));
+    });
+
+    const tracks = [];
+    const grids = [];
+    groups.forEach((list, parent) => {
+      (isTrack(parent) ? tracks : grids).push(parent);
+    });
+    grids.sort(docBefore);
+
+    if (grids.length > 1) {
+      const dest = grids[0];
       const hits = [];
-      const rest = [];
-      base.forEach((node) => {
-        if (hitCells.has(node)) hits.push(node);
-        else rest.push(node);
+      const seen = new Set();
+      grids.forEach((parent) => {
+        layoutSnap.get(parent).forEach((node) => {
+          if (seen.has(node)) return;
+          if (state.items.some((it) => it.hit && it.cell === node)) {
+            seen.add(node);
+            hits.push(node);
+          }
+        });
       });
-      hits.concat(rest).forEach((node) => parent.appendChild(node));
+      const destRest = layoutSnap.get(dest).filter((node) => !seen.has(node));
+      placeNodes(dest, hits.concat(destRest));
+      grids.slice(1).forEach((parent) => {
+        placeNodes(parent, layoutSnap.get(parent).filter((node) => !seen.has(node)));
+      });
+    } else {
+      grids.forEach(reorderWithin);
+    }
+
+    tracks.forEach((parent) => {
+      reorderWithin(parent);
       settleTrack(parent);
     });
+  }
+
+  function usableHref(a) {
+    if (!a || !a.getAttribute) return '';
+    const raw = a.getAttribute('href') || '';
+    if (!raw || raw === '#' || /^javascript:/i.test(raw)) return '';
+    if (a.classList.contains('disabled') || a.getAttribute('aria-disabled') === 'true') return '';
+    const li = a.closest && a.closest('li, button');
+    if (li && (li.classList.contains('disabled') || li.getAttribute('aria-disabled') === 'true')) return '';
+    let href = '';
+    try { href = new URL(raw, location.href).href; } catch (e) { return ''; }
+    if (!href || href === location.href) return '';
+    return href;
+  }
+
+  function pagerText(el) {
+    return (el.textContent || '').replace(/\s+/g, '');
+  }
+
+  /** 列表页的上一页 / 下一页。轮播和正文里的链接不算。 */
+  function findPageHref(dir) {
+    const rel = dir === 'prev' ? 'prev' : 'next';
+    const relNode = document.querySelector('a[rel="' + rel + '"], link[rel="' + rel + '"]');
+    const relHref = usableHref(relNode);
+    if (relHref) return relHref;
+
+    const scopes = qsa(document, '.pagination, .pager, .page-nav, .bot-page');
+    if (!scopes.length) return '';
+    const word = dir === 'prev' ? /^(上一页|上一頁|prev|previous)$/i : /^(下一页|下一頁|next)$/i;
+    const near = dir === 'prev' ? /^[‹<〈]$/ : /^[›>〉]$/;
+    const far = dir === 'prev' ? /^[«〈]{1,2}$/ : /^[»〉]{1,2}$/;
+    let nearHref = '';
+    let farHref = '';
+    scopes.forEach((scope) => {
+      qsa(scope, 'a[href]').forEach((a) => {
+        const href = usableHref(a);
+        if (!href) return;
+        const text = pagerText(a);
+        const li = a.parentElement;
+        const liCls = (li && li.className) || '';
+        const marked = dir === 'prev'
+          ? /prev|previous/i.test(a.className + ' ' + liCls)
+          : /(^|[^a-z])next([^a-z]|$)/i.test(a.className + ' ' + liCls);
+        if (marked || word.test(text)) {
+          if (!nearHref) nearHref = href;
+          return;
+        }
+        if (!nearHref && near.test(text)) nearHref = href;
+        else if (!farHref && far.test(text)) farHref = href;
+      });
+    });
+    return nearHref || farHref;
   }
 
   /** 标签原来的顺序，清空时放回去 */
@@ -942,7 +1050,7 @@
     box-shadow: inset 0 1px 0 rgba(255,255,255,.85), inset 0 0 0 1px rgba(255,255,255,.32);
   }
   .field:focus-within { box-shadow: inset 0 1px 0 #fff, inset 0 0 0 1px rgba(255,255,255,.7); }
-  .chip, .tag, .jump, .clear {
+  .chip, .tag, .jump, .clear, .pager button {
     background: linear-gradient(180deg, rgba(255,255,255,.5), rgba(255,255,255,.12));
     box-shadow: inset 0 1px 0 rgba(255,255,255,.95), inset 0 -8px 12px rgba(255,255,255,.1), 0 1px 1px rgba(0,0,0,.04);
   }
@@ -978,7 +1086,13 @@
     border-radius: 999px; padding: 6px 10px;
   }
   .jump:disabled { opacity: .4; cursor: default; }
-  .jump:active:not(:disabled), .clear:active:not(:disabled), .tag:active { transform: scale(0.98); }
+  .jump:active:not(:disabled), .clear:active:not(:disabled), .tag:active, .pager button:active:not(:disabled) { transform: scale(0.98); }
+  .pager { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .pager button {
+    border: 0; min-height: 44px; border-radius: 16px; cursor: pointer;
+    color: #16130f; font-size: 14px; font-weight: 650;
+  }
+  .pager button:disabled { opacity: .38; cursor: default; }
   .clear {
     width: 100%; border: 0; color: #16130f;
     border-radius: 16px; min-height: 40px; padding: 8px 12px;
@@ -1139,6 +1253,10 @@
           <div class="count"></div>
           <button class="jump" type="button" data-act="jump">跳到下一本</button>
         </div>
+        <div class="pager">
+          <button type="button" data-act="page" data-dir="prev">上一页</button>
+          <button type="button" data-act="page" data-dir="next">下一页</button>
+        </div>
         <div class="list"></div>
         <p class="foot">不分大小写，简繁算同一个。这一页没有的词也会记下。</p>
         <button class="clear" type="button" data-act="reset">清空已选</button>
@@ -1160,6 +1278,8 @@
       sum: wrap.querySelector('.sum'),
       jumpBtn: wrap.querySelector('[data-act="jump"]'),
       clearBtn: wrap.querySelector('[data-act="reset"]'),
+      pagerPrev: wrap.querySelector('[data-dir="prev"]'),
+      pagerNext: wrap.querySelector('[data-dir="next"]'),
     };
     mountGlass(root, wrap.querySelector('.plate'));
 
@@ -1221,6 +1341,12 @@
       }
       if (act === 'reset') { clearAll(); return; }
       if (act === 'jump') { jumpNext(); return; }
+      if (act === 'page') {
+        const href = btn.dataset.href;
+        if (!href || btn.disabled) return;
+        location.assign(href);
+        return;
+      }
       if (act === 'del') {
         removePick(btn.dataset.key);
         renderPanel({ keepScroll: true });
@@ -1384,6 +1510,19 @@
     if (ui.sum) ui.sum.textContent = picks.length ? (picks.length + ' 个标签') : '未选标签';
     if (ui.jumpBtn) ui.jumpBtn.disabled = state.matched <= 0 || !picks.length;
     if (ui.clearBtn) ui.clearBtn.disabled = !picks.length;
+    renderPager();
+  }
+
+  function renderPager() {
+    if (!ui.pagerPrev || !ui.pagerNext) return;
+    const prev = findPageHref('prev');
+    const next = findPageHref('next');
+    ui.pagerPrev.disabled = !prev;
+    ui.pagerNext.disabled = !next;
+    if (prev) ui.pagerPrev.dataset.href = prev;
+    else delete ui.pagerPrev.dataset.href;
+    if (next) ui.pagerNext.dataset.href = next;
+    else delete ui.pagerNext.dataset.href;
   }
 
   function renderPanel(opts) {
