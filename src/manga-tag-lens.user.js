@@ -2,7 +2,7 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.15
+// @version      0.2.16
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  记下要找的标签，在当前页把对上的漫画亮出来。本页没有的标签也会保存，换页后继续对。不分大小写，简体繁体视为同一个。
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.15';
+  const VERSION = '0.2.16';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -1013,8 +1013,6 @@
   .chev {
     margin-left: auto;
     padding: 4px 10px; border-radius: 999px;
-    background: linear-gradient(180deg, rgba(255,255,255,.62), rgba(255,255,255,.16));
-    box-shadow: inset 0 1px 0 #fff, inset 0 -8px 10px rgba(255,255,255,.12);
     font-size: 12px; font-weight: 650;
   }
   .wrap.collapsed .body { display: none; }
@@ -1054,14 +1052,15 @@
     border-radius: 14px; padding: 8px 8px 7px; cursor: pointer; line-height: 1.2;
   }
   .seg button small { display: block; font-size: 10px; letter-spacing: .04em; opacity: .72; }
-  .seg button.on {
+  .seg button.on,
+  .tag.on {
     color: #16130f; font-weight: 650;
-    background: linear-gradient(180deg, rgba(255,255,255,.82), rgba(255,255,255,.34));
+    background-color: rgba(255,255,255,.32);
     box-shadow:
-      inset 0 1px 0 #fff,
-      inset 0 0 0 1px rgba(255,255,255,.8),
-      inset 0 -12px 16px rgba(255,255,255,.35),
-      0 8px 16px rgba(0,0,0,.08);
+      inset 0 1px 1px #fff,
+      inset 0 0 0 1px rgba(255,255,255,.92),
+      inset 0 -18px 16px rgba(255,255,255,.42),
+      0 8px 16px rgba(22,19,15,.12);
   }
   .seg button:active { transform: scale(0.98); }
   .field {
@@ -1072,33 +1071,22 @@
     box-shadow: inset 0 1px 0 rgba(255,255,255,.85), inset 0 0 0 1px rgba(255,255,255,.32);
   }
   .field:focus-within { box-shadow: inset 0 1px 0 #fff, inset 0 0 0 1px rgba(255,255,255,.7); }
-  .chip, .tag {
-    background: linear-gradient(180deg, rgba(255,255,255,.5), rgba(255,255,255,.12));
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.95), inset 0 -8px 12px rgba(255,255,255,.1), 0 1px 1px rgba(0,0,0,.04);
-  }
-  .jump, .clear, .pager button, .seg button {
+  .chev, .chip, .tag, .jump, .clear, .pager button, .seg button {
     position: relative;
     overflow: hidden;
-    background: linear-gradient(180deg, rgba(255,255,255,.28), rgba(255,255,255,.06) 46%, rgba(255,255,255,.2));
-    backdrop-filter: blur(22px) saturate(1.9);
-    -webkit-backdrop-filter: blur(22px) saturate(1.9);
+    background-color: rgba(255,255,255,.08);
+    background-image:
+      linear-gradient(180deg, #fff 0%, rgba(255,255,255,.7) 28%, rgba(255,255,255,0) 56%),
+      linear-gradient(180deg, rgba(255,255,255,.1), rgba(42,54,74,.2));
+    background-repeat: no-repeat;
+    backdrop-filter: blur(18px) saturate(1.85);
+    -webkit-backdrop-filter: blur(18px) saturate(1.85);
     box-shadow:
       inset 0 1px 0 #fff,
-      inset 0 0 0 1px rgba(255,255,255,.72),
-      inset 0 -18px 20px rgba(255,255,255,.22),
-      0 10px 18px rgba(20,16,12,.1);
-  }
-  .jump::before, .clear::before, .pager button::before, .seg button::before {
-    content: "";
-    position: absolute;
-    left: 1px;
-    right: 1px;
-    top: 0;
-    height: 52%;
-    border-radius: inherit;
-    background: linear-gradient(180deg, rgba(255,255,255,.78), rgba(255,255,255,0));
-    pointer-events: none;
-    z-index: -1;
+      inset 0 -1px 0 rgba(42,54,74,.22),
+      inset 0 0 0 1px rgba(255,255,255,.7),
+      inset 0 -16px 14px rgba(42,54,74,.1),
+      0 8px 16px rgba(22,19,15,.12);
   }
   .chip {
     display: inline-flex; align-items: center; gap: 2px; max-width: 100%;
@@ -1106,8 +1094,11 @@
     border-radius: 999px; font-size: 12px; font-weight: 650;
   }
   .chip.away, .tag.away {
-    background: rgba(255,255,255,.14);
-    box-shadow: inset 0 0 0 1px rgba(28,25,21,.28), inset 0 1px 0 rgba(255,255,255,.5);
+    background-color: rgba(255,255,255,.05);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.75),
+      inset 0 0 0 1px rgba(28,25,21,.28),
+      0 4px 10px rgba(22,19,15,.06);
   }
   .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
   .chip button {
@@ -1158,13 +1149,14 @@
     border-radius: 999px; padding: 5px 9px; cursor: pointer; font-size: 12px;
   }
   .tag .n { color: rgba(28,25,21,.5); font-size: 10px; font-variant-numeric: tabular-nums; }
-  .tag.on {
-    font-weight: 650;
-    background: linear-gradient(180deg, rgba(255,255,255,.82), rgba(255,255,255,.34));
-    box-shadow: inset 0 1px 0 #fff, inset 0 -8px 14px rgba(255,255,255,.25), 0 6px 14px rgba(0,0,0,.08);
-  }
   .tag.on .n { color: rgba(28,25,21,.55); }
-  .tag.hot { box-shadow: inset 0 1px 0 #fff, inset 0 0 0 1px rgba(255,255,255,.9); }
+  .tag.hot {
+    box-shadow:
+      inset 0 1px 0 #fff,
+      inset 0 0 0 1px rgba(255,255,255,.95),
+      inset 0 -12px 14px rgba(255,255,255,.24),
+      0 6px 14px rgba(22,19,15,.1);
+  }
   .tag.dim { opacity: .45; }
   .tag kbd {
     font-family: inherit; font-size: 10px; padding: 0 4px; border-radius: 4px;
