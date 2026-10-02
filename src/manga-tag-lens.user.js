@@ -2,7 +2,7 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.4
+// @version      0.2.5
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  记下要找的标签，在当前页把对上的漫画亮出来。本页没有的标签也会保存，换页后继续对。不分大小写，简体繁体视为同一个。
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.4';
+  const VERSION = '0.2.5';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -646,9 +646,9 @@
       mapW = Math.max(8, Math.round(mapW * k));
       mapH = Math.max(8, Math.round(mapH * k));
     }
-    const radius = Math.min(Math.max(12, Math.round(32 * mapW / w)), Math.floor(Math.min(mapW, mapH) / 2) - 1);
-    const bezel = Math.max(6, Math.min(Math.round(20 * mapW / w), radius - 1));
-    const profile = glassProfile(40, bezel, 1.8);
+    const radius = Math.min(Math.max(16, Math.round(40 * mapW / w)), Math.floor(Math.min(mapW, mapH) / 2) - 1);
+    const bezel = Math.max(12, Math.min(Math.round(34 * mapW / w), radius - 1));
+    const profile = glassProfile(78, bezel, 2.6);
     let maxDisp = 1;
     for (let i = 0; i < profile.length; i++) maxDisp = Math.max(maxDisp, Math.abs(profile[i]));
     const dispUrl = glassMap(mapW, mapH, radius, bezel, (d, W, H, r, bz) => {
@@ -710,16 +710,16 @@
         }
       }
     });
-    const scale = maxDisp * 0.9;
+    const scale = maxDisp * 1.55;
     return `<filter id="mtl-lg" x="0%" y="0%" width="100%" height="100%" color-interpolation-filters="sRGB">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="1.4" result="blurred_source"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2.4" result="blurred_source"/>
       <feImage href="${dispUrl}" x="0" y="0" width="${w}" height="${h}" result="disp_map"/>
       <feDisplacementMap in="blurred_source" in2="disp_map" scale="${scale}" xChannelSelector="R" yChannelSelector="G" result="displaced"/>
-      <feColorMatrix in="displaced" type="saturate" values="3" result="displaced_sat"/>
+      <feColorMatrix in="displaced" type="saturate" values="4" result="displaced_sat"/>
       <feImage href="${specUrl}" x="0" y="0" width="${w}" height="${h}" result="spec_layer"/>
       <feComposite in="displaced_sat" in2="spec_layer" operator="in" result="spec_masked"/>
       <feComponentTransfer in="spec_layer" result="spec_faded">
-        <feFuncA type="linear" slope="0.5"/>
+        <feFuncA type="linear" slope="0.85"/>
       </feComponentTransfer>
       <feBlend in="spec_masked" in2="displaced" mode="normal" result="with_sat"/>
       <feBlend in="spec_faded" in2="with_sat" mode="normal"/>
@@ -768,9 +768,9 @@
     width: min(336px, calc(100vw - 24px));
     max-height: calc(100vh - 32px);
     display: flex; flex-direction: column;
-    color: #1c1915;
-    border-radius: 32px;
-    box-shadow: 0 4px 24px rgba(0,0,0,.18);
+    color: #16130f;
+    border-radius: 40px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.16), 0 1px 0 rgba(255,255,255,.35);
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
     font-size: 13px; line-height: 1.45;
     overflow: hidden;
@@ -778,17 +778,25 @@
   }
   .plate {
     position: absolute; inset: 0; z-index: 0; border-radius: inherit; pointer-events: none;
-    background: rgba(255,255,255,.28);
-    box-shadow: inset 0 0 20px -5px rgba(255,255,255,.7);
-    backdrop-filter: blur(18px) saturate(1.5);
-    -webkit-backdrop-filter: blur(18px) saturate(1.5);
+    background: rgba(255,255,255,.16);
+    box-shadow: inset 0 0 24px -8px rgba(255,255,255,.65);
+    backdrop-filter: blur(22px) saturate(1.8);
+    -webkit-backdrop-filter: blur(22px) saturate(1.8);
   }
   .plate.refract {
-    background: rgba(255,255,255,.34);
+    background: rgba(255,255,255,.06);
     backdrop-filter: url(#mtl-lg);
     -webkit-backdrop-filter: url(#mtl-lg);
   }
-  .hd, .body { position: relative; z-index: 1; }
+  .lip {
+    position: absolute; inset: 0; z-index: 2; pointer-events: none; border-radius: inherit;
+    box-shadow:
+      inset 0 1.5px 0 rgba(255,255,255,.92),
+      inset 0 0 0 1px rgba(255,255,255,.38),
+      inset 0 -18px 24px rgba(255,255,255,.06);
+    background: linear-gradient(180deg, rgba(255,255,255,.34), rgba(255,255,255,0) 26%);
+  }
+  .hd, .body { position: relative; z-index: 3; }
   .hd {
     display: flex; align-items: center; gap: 8px;
     min-height: 56px; padding: 12px 18px;
@@ -801,8 +809,8 @@
   .chev {
     margin-left: auto;
     padding: 4px 10px; border-radius: 999px;
-    background: rgba(255,255,255,.35);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.85), inset 0 -6px 10px rgba(255,255,255,.15);
+    background: linear-gradient(180deg, rgba(255,255,255,.62), rgba(255,255,255,.16));
+    box-shadow: inset 0 1px 0 #fff, inset 0 -8px 10px rgba(255,255,255,.12);
     font-size: 12px; font-weight: 650;
   }
   .wrap.collapsed .body { display: none; }
@@ -815,31 +823,32 @@
   }
   .seg {
     display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
-    padding: 4px; border-radius: 16px;
-    background: rgba(255,255,255,.22);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.7), inset 0 0 0 1px rgba(255,255,255,.35);
+    padding: 4px; border-radius: 18px;
+    background: rgba(255,255,255,.1);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.55), inset 0 0 0 1px rgba(255,255,255,.28);
   }
   .seg button {
-    border: 0; background: transparent; color: rgba(28,25,21,.62);
-    border-radius: 12px; padding: 8px 8px 7px; cursor: pointer; line-height: 1.2;
+    border: 0; background: transparent; color: rgba(22,19,15,.72);
+    border-radius: 14px; padding: 8px 8px 7px; cursor: pointer; line-height: 1.2;
   }
   .seg button small { display: block; font-size: 10px; letter-spacing: .04em; opacity: .72; }
   .seg button.on {
-    background: rgba(255,255,255,.55); color: #1c1915; font-weight: 650;
-    box-shadow: inset 0 1px 0 #fff, inset 0 -8px 12px rgba(255,255,255,.25), 0 4px 12px rgba(0,0,0,.06);
+    color: #16130f; font-weight: 650;
+    background: linear-gradient(180deg, rgba(255,255,255,.78), rgba(255,255,255,.28));
+    box-shadow: inset 0 1px 0 #fff, inset 0 -10px 14px rgba(255,255,255,.2), 0 6px 14px rgba(0,0,0,.08);
   }
   .seg button:active { transform: scale(0.98); }
   .field {
     display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
     min-height: 46px; padding: 8px;
-    background: rgba(255,255,255,.2);
-    border-radius: 16px; cursor: text;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.75), inset 0 0 0 1px rgba(255,255,255,.4);
+    background: linear-gradient(180deg, rgba(255,255,255,.28), rgba(255,255,255,.08));
+    border-radius: 18px; cursor: text;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.85), inset 0 0 0 1px rgba(255,255,255,.32);
   }
-  .field:focus-within { box-shadow: inset 0 1px 0 #fff, inset 0 0 0 1px rgba(255,255,255,.8); }
-  .chip, .tag, .ghost, .jump {
-    background: rgba(255,255,255,.38);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.9), inset 0 -6px 10px rgba(255,255,255,.18), 0 4px 10px rgba(0,0,0,.06);
+  .field:focus-within { box-shadow: inset 0 1px 0 #fff, inset 0 0 0 1px rgba(255,255,255,.7); }
+  .chip, .tag, .jump, .clear {
+    background: linear-gradient(180deg, rgba(255,255,255,.5), rgba(255,255,255,.12));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.95), inset 0 -8px 12px rgba(255,255,255,.1), 0 1px 1px rgba(0,0,0,.04);
   }
   .chip {
     display: inline-flex; align-items: center; gap: 2px; max-width: 100%;
@@ -873,11 +882,13 @@
     border-radius: 999px; padding: 6px 10px;
   }
   .jump:disabled { opacity: .4; cursor: default; }
-  .jump:active:not(:disabled), .ghost:active, .tag:active { transform: scale(0.98); }
-  .ghost {
-    border: 0; color: #1c1915;
-    border-radius: 999px; padding: 6px 10px; cursor: pointer; font-size: 12px; font-weight: 650;
+  .jump:active:not(:disabled), .clear:active:not(:disabled), .tag:active { transform: scale(0.98); }
+  .clear {
+    width: 100%; border: 0; color: #16130f;
+    border-radius: 16px; min-height: 40px; padding: 8px 12px;
+    cursor: pointer; font-size: 13px; font-weight: 650;
   }
+  .clear:disabled { opacity: .38; cursor: default; }
   .list {
     display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start;
     max-height: 42vh; overflow: auto;
@@ -889,8 +900,9 @@
   }
   .tag .n { color: rgba(28,25,21,.5); font-size: 10px; font-variant-numeric: tabular-nums; }
   .tag.on {
-    background: rgba(255,255,255,.62); font-weight: 650;
-    box-shadow: inset 0 1px 0 #fff, inset 0 -8px 14px rgba(255,255,255,.3), 0 6px 14px rgba(0,0,0,.08);
+    font-weight: 650;
+    background: linear-gradient(180deg, rgba(255,255,255,.82), rgba(255,255,255,.34));
+    box-shadow: inset 0 1px 0 #fff, inset 0 -8px 14px rgba(255,255,255,.25), 0 6px 14px rgba(0,0,0,.08);
   }
   .tag.on .n { color: rgba(28,25,21,.55); }
   .tag.hot { box-shadow: inset 0 1px 0 #fff, inset 0 0 0 1px rgba(255,255,255,.9); }
@@ -900,7 +912,7 @@
     background: rgba(255,255,255,.45); color: #1c1915;
   }
   .empty { color: rgba(28,25,21,.62); font-size: 12px; padding: 8px 2px; }
-  .foot { font-size: 11px; color: rgba(28,25,21,.55); }
+  .foot { font-size: 11px; color: rgba(22,19,15,.58); line-height: 1.4; }
   `;
 
   const PAGE_CSS = `
@@ -961,6 +973,7 @@
     wrap.className = 'wrap';
     wrap.innerHTML = `
       <div class="plate"></div>
+      <div class="lip"></div>
       <div class="hd" title="点击展开或收起，按住拖动">
         <span class="name">标签透镜</span>
         <span class="ver">v${VERSION}</span>
@@ -982,10 +995,8 @@
           <button class="jump" type="button" data-act="jump">跳到下一本</button>
         </div>
         <div class="list"></div>
-        <div class="row">
-          <span class="foot">记下的标签会留着。这一页没有，换页后会对上。不分大小写，简繁算同一个。</span>
-          <button class="ghost" type="button" data-act="reset">清空</button>
-        </div>
+        <p class="foot">不分大小写，简繁算同一个。这一页没有的词也会记下。</p>
+        <button class="clear" type="button" data-act="reset">清空已选</button>
       </div>
     `;
     root.appendChild(wrap);
@@ -1003,6 +1014,7 @@
       chev: wrap.querySelector('.chev'),
       sum: wrap.querySelector('.sum'),
       jumpBtn: wrap.querySelector('[data-act="jump"]'),
+      clearBtn: wrap.querySelector('[data-act="reset"]'),
     };
     mountGlass(root, wrap.querySelector('.plate'));
 
@@ -1226,6 +1238,7 @@
     }
     if (ui.sum) ui.sum.textContent = picks.length ? (picks.length + ' 个标签') : '未选标签';
     if (ui.jumpBtn) ui.jumpBtn.disabled = state.matched <= 0 || !picks.length;
+    if (ui.clearBtn) ui.clearBtn.disabled = !picks.length;
   }
 
   function renderPanel(opts) {
