@@ -2,7 +2,7 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.7
+// @version      0.2.8
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  记下要找的标签，在当前页把对上的漫画亮出来。本页没有的标签也会保存，换页后继续对。不分大小写，简体繁体视为同一个。
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.7';
+  const VERSION = '0.2.8';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -939,20 +939,24 @@
   const PAGE_CSS = `
   [data-mtl="hit"] {
     border-radius: 16px !important;
-    outline: 1px solid rgba(255,255,255,.94) !important;
+    outline: 1px solid rgba(255,255,255,.95) !important;
     outline-offset: 4px !important;
     box-shadow:
-      0 0 0 1px rgba(0,0,0,.1),
-      0 10px 26px rgba(0,0,0,.16) !important;
+      inset 0 1px 0 rgba(255,255,255,.7),
+      inset 0 0 22px rgba(255, 176, 64, .28),
+      0 0 0 1px rgba(255, 196, 110, .9),
+      0 0 0 6px rgba(255, 160, 48, .32),
+      0 0 24px rgba(255, 150, 40, .48) !important;
   }
   [data-mtl-focus="1"] {
     outline: 1.5px solid #fff !important;
     outline-offset: 6px !important;
     box-shadow:
-      0 0 0 1px rgba(255,255,255,.7),
-      0 0 0 8px rgba(255,255,255,.22),
-      0 0 28px rgba(255,255,255,.42),
-      0 16px 36px rgba(0,0,0,.22) !important;
+      inset 0 1px 0 rgba(255,255,255,.85),
+      inset 0 0 26px rgba(120, 210, 255, .38),
+      0 0 0 1px rgba(170, 230, 255, .95),
+      0 0 0 8px rgba(90, 190, 255, .34),
+      0 0 32px rgba(80, 180, 255, .62) !important;
     position: relative !important;
     z-index: 4 !important;
   }
@@ -961,26 +965,26 @@
     top: 10px !important;
     left: 10px !important;
     z-index: 6 !important;
-    background: linear-gradient(180deg, rgba(255,255,255,.9), rgba(255,255,255,.42)) !important;
-    color: #16130f !important;
+    background: linear-gradient(180deg, rgba(255,255,255,.82), rgba(150, 220, 255, .48)) !important;
+    color: #0c2433 !important;
     font: 650 12px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif !important;
     letter-spacing: .02em !important;
     padding: 5px 10px !important;
     border-radius: 999px !important;
     pointer-events: none !important;
-    backdrop-filter: blur(16px) saturate(1.6) !important;
-    -webkit-backdrop-filter: blur(16px) saturate(1.6) !important;
-    box-shadow: inset 0 1px 0 #fff, 0 0 0 1px rgba(255,255,255,.5), 0 8px 18px rgba(0,0,0,.16) !important;
+    backdrop-filter: blur(16px) saturate(1.8) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(1.8) !important;
+    box-shadow: inset 0 1px 0 #fff, 0 0 0 1px rgba(170, 225, 255, .75), 0 8px 18px rgba(40, 130, 190, .28) !important;
   }
   [data-mtl="miss"] {
     opacity: 0.4 !important;
     filter: saturate(.72) !important;
   }
   [data-mtl-tag="1"] {
-    background: linear-gradient(180deg, rgba(255,255,255,.94), rgba(255,255,255,.55)) !important;
-    color: #16130f !important;
+    background: linear-gradient(180deg, rgba(255,255,255,.88), rgba(255, 196, 110, .62)) !important;
+    color: #3a2408 !important;
     border-radius: 999px !important;
-    box-shadow: inset 0 1px 0 #fff, 0 0 0 1px rgba(255,255,255,.7), 0 2px 8px rgba(0,0,0,.12) !important;
+    box-shadow: inset 0 1px 0 #fff, 0 0 0 1px rgba(255, 190, 90, .7), 0 2px 10px rgba(255, 150, 40, .35) !important;
     font-weight: 650 !important;
     text-decoration: none !important;
   }
