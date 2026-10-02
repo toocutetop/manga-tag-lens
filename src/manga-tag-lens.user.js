@@ -2,7 +2,7 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.5
+// @version      0.2.6
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  记下要找的标签，在当前页把对上的漫画亮出来。本页没有的标签也会保存，换页后继续对。不分大小写，简体繁体视为同一个。
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.5';
+  const VERSION = '0.2.6';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -820,7 +820,25 @@
     padding: 0 16px 16px;
     display: flex; flex-direction: column; gap: 10px;
     overflow: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(22,19,15,.35) transparent;
   }
+  .body::-webkit-scrollbar,
+  .list::-webkit-scrollbar { width: 8px; height: 8px; }
+  .body::-webkit-scrollbar-track,
+  .list::-webkit-scrollbar-track { background: transparent; }
+  .body::-webkit-scrollbar-thumb,
+  .list::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,.7);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    border-radius: 999px;
+    box-shadow: inset 0 0 0 1px rgba(22,19,15,.2);
+  }
+  .body::-webkit-scrollbar-button,
+  .list::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+  .body::-webkit-scrollbar-corner,
+  .list::-webkit-scrollbar-corner { background: transparent; }
   .seg {
     display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
     padding: 4px; border-radius: 18px;
@@ -892,6 +910,9 @@
   .list {
     display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start;
     max-height: 42vh; overflow: auto;
+    padding-right: 2px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(22,19,15,.35) transparent;
   }
   .tag {
     display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
