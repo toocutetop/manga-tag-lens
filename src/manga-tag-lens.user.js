@@ -2,7 +2,7 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.6
+// @version      0.2.7
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  记下要找的标签，在当前页把对上的漫画亮出来。本页没有的标签也会保存，换页后继续对。不分大小写，简体繁体视为同一个。
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.6';
+  const VERSION = '0.2.7';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -938,37 +938,50 @@
 
   const PAGE_CSS = `
   [data-mtl="hit"] {
-    outline: 2px solid #ffb020 !important;
-    outline-offset: 2px !important;
-    border-radius: 10px;
+    border-radius: 16px !important;
+    outline: 1px solid rgba(255,255,255,.94) !important;
+    outline-offset: 4px !important;
+    box-shadow:
+      0 0 0 1px rgba(0,0,0,.1),
+      0 10px 26px rgba(0,0,0,.16) !important;
   }
   [data-mtl-focus="1"] {
-    outline: 4px solid #2ee6a6 !important;
-    outline-offset: 4px !important;
-    box-shadow: 0 0 0 8px rgba(46, 230, 166, .32) !important;
+    outline: 1.5px solid #fff !important;
+    outline-offset: 6px !important;
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,.7),
+      0 0 0 8px rgba(255,255,255,.22),
+      0 0 28px rgba(255,255,255,.42),
+      0 16px 36px rgba(0,0,0,.22) !important;
     position: relative !important;
     z-index: 4 !important;
   }
   .mtl-focus-badge {
     position: absolute !important;
-    top: 8px !important;
-    left: 8px !important;
+    top: 10px !important;
+    left: 10px !important;
     z-index: 6 !important;
-    background: #2ee6a6 !important;
-    color: #04281c !important;
-    font: 700 12px/1.2 "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif !important;
-    padding: 4px 8px !important;
+    background: linear-gradient(180deg, rgba(255,255,255,.9), rgba(255,255,255,.42)) !important;
+    color: #16130f !important;
+    font: 650 12px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif !important;
+    letter-spacing: .02em !important;
+    padding: 5px 10px !important;
     border-radius: 999px !important;
     pointer-events: none !important;
-    box-shadow: 0 2px 8px rgba(0,0,0,.35) !important;
+    backdrop-filter: blur(16px) saturate(1.6) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(1.6) !important;
+    box-shadow: inset 0 1px 0 #fff, 0 0 0 1px rgba(255,255,255,.5), 0 8px 18px rgba(0,0,0,.16) !important;
   }
-  [data-mtl="miss"] { opacity: 0.34 !important; }
+  [data-mtl="miss"] {
+    opacity: 0.4 !important;
+    filter: saturate(.72) !important;
+  }
   [data-mtl-tag="1"] {
-    background: #ffb020 !important;
-    color: #1a1203 !important;
-    border-radius: 4px !important;
-    box-shadow: 0 0 0 2px #ffb020, 0 0 14px rgba(255, 176, 32, .9) !important;
-    font-weight: 700 !important;
+    background: linear-gradient(180deg, rgba(255,255,255,.94), rgba(255,255,255,.55)) !important;
+    color: #16130f !important;
+    border-radius: 999px !important;
+    box-shadow: inset 0 1px 0 #fff, 0 0 0 1px rgba(255,255,255,.7), 0 2px 8px rgba(0,0,0,.12) !important;
+    font-weight: 650 !important;
     text-decoration: none !important;
   }
   `;
