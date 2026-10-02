@@ -2,7 +2,7 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.2
+// @version      0.2.3
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  手动输入多个标签，在当前页把对上的漫画和标签亮出来。不分大小写，简体繁体视为同一个，可选「同时要」或「有一个就行」。
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.2';
+  const VERSION = '0.2.3';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -425,6 +425,10 @@
   function clearMarks() {
     qsa(document, '[data-mtl]').forEach((el) => el.removeAttribute('data-mtl'));
     qsa(document, '[data-mtl-tag]').forEach((el) => el.removeAttribute('data-mtl-tag'));
+    qsa(document, '[data-mtl-focus]').forEach((el) => {
+      el.removeAttribute('data-mtl-focus');
+    });
+    qsa(document, '.mtl-focus-badge').forEach((el) => el.remove());
   }
 
   function markTagNodes(el, keys) {
@@ -459,7 +463,26 @@
     });
     reorderHits();
     state.matched = active ? matched : state.total;
+    markFocus();
     renderStatus();
+  }
+
+  function hitItems() {
+    return state.items.filter((it) => it.hit);
+  }
+
+  function markFocus() {
+    qsa(document, '[data-mtl-focus]').forEach((el) => el.removeAttribute('data-mtl-focus'));
+    qsa(document, '.mtl-focus-badge').forEach((el) => el.remove());
+    const list = hitItems();
+    if (state.cursor < 0 || state.cursor >= list.length) return null;
+    const el = list[state.cursor].el;
+    el.setAttribute('data-mtl-focus', '1');
+    const badge = document.createElement('div');
+    badge.className = 'mtl-focus-badge';
+    badge.textContent = '当前 ' + (state.cursor + 1) + '/' + list.length;
+    el.appendChild(badge);
+    return el;
   }
 
   function clearAll() {
@@ -474,11 +497,12 @@
   }
 
   function jumpNext() {
-    const hits = state.items.filter((it) => it.hit);
-    if (!hits.length) return;
-    state.cursor = (state.cursor + 1) % hits.length;
-    const el = hits[state.cursor].el;
-    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    const list = hitItems();
+    if (!list.length) return;
+    state.cursor = (state.cursor + 1) % list.length;
+    const el = markFocus();
+    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    renderStatus();
   }
 
   function commitToken(token) {
@@ -656,10 +680,29 @@
 
   const PAGE_CSS = `
   [data-mtl="hit"] {
-    outline: 3px solid #ffb020 !important;
-    outline-offset: 3px !important;
-    box-shadow: 0 0 0 6px rgba(255, 176, 32, .35) !important;
+    outline: 2px solid #ffb020 !important;
+    outline-offset: 2px !important;
     border-radius: 10px;
+  }
+  [data-mtl-focus="1"] {
+    outline: 4px solid #2ee6a6 !important;
+    outline-offset: 4px !important;
+    box-shadow: 0 0 0 8px rgba(46, 230, 166, .32) !important;
+    position: relative !important;
+    z-index: 4 !important;
+  }
+  .mtl-focus-badge {
+    position: absolute !important;
+    top: 8px !important;
+    left: 8px !important;
+    z-index: 6 !important;
+    background: #2ee6a6 !important;
+    color: #04281c !important;
+    font: 700 12px/1.2 "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif !important;
+    padding: 4px 8px !important;
+    border-radius: 999px !important;
+    pointer-events: none !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,.35) !important;
   }
   [data-mtl="miss"] { opacity: 0.34 !important; }
   [data-mtl-tag="1"] {
@@ -927,6 +970,9 @@
     if (!ui.statusBox) return;
     if (!picks.length) {
       ui.statusBox.textContent = '本页 ' + state.total + ' 部有标签';
+    } else if (state.cursor >= 0 && state.matched > 0) {
+      ui.statusBox.innerHTML = '亮了 <b>' + state.matched + '</b> / ' + state.total
+        + ' · 当前第 ' + (state.cursor + 1) + ' 本';
     } else {
       ui.statusBox.innerHTML = '亮了 <b>' + state.matched + '</b> / ' + state.total;
     }
