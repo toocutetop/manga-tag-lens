@@ -2,7 +2,7 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.9
+// @version      0.2.10
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  记下要找的标签，在当前页把对上的漫画亮出来。本页没有的标签也会保存，换页后继续对。不分大小写，简体繁体视为同一个。
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.9';
+  const VERSION = '0.2.10';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -464,13 +464,35 @@
     });
   }
 
+  /** 标签原来的顺序，清空时放回去 */
+  const tagSnap = new Map();
+
+  function restoreTagOrder() {
+    tagSnap.forEach((children, parent) => {
+      if (!parent || !parent.isConnected) return;
+      children.forEach((node) => {
+        if (node) parent.appendChild(node);
+      });
+    });
+    tagSnap.clear();
+  }
+
   function clearMarks() {
+    restoreTagOrder();
     qsa(document, '[data-mtl]').forEach((el) => el.removeAttribute('data-mtl'));
     qsa(document, '[data-mtl-tag]').forEach((el) => el.removeAttribute('data-mtl-tag'));
     qsa(document, '[data-mtl-focus]').forEach((el) => {
       el.removeAttribute('data-mtl-focus');
     });
     qsa(document, '.mtl-focus-badge').forEach((el) => el.remove());
+  }
+
+  function tagChip(node) {
+    const link = node.closest && node.closest('a');
+    if (!link || !node.parentElement || !link.contains(node)) return node;
+    const label = cleanLabel(link.textContent || '');
+    if (!label || [...label].length > 24) return node;
+    return link;
   }
 
   function markTagNodes(el, keys) {
@@ -482,9 +504,31 @@
       if (!label || [...label].length > 24) return;
       if (want.has(norm(label))) hits.push(n);
     });
+    const chips = [];
     hits
       .filter((n) => !hits.some((o) => o !== n && n.contains(o)))
-      .forEach((n) => n.setAttribute('data-mtl-tag', '1'));
+      .forEach((n) => {
+        const chip = tagChip(n);
+        if (!el.contains(chip) || chips.includes(chip)) return;
+        chips.push(chip);
+        chip.setAttribute('data-mtl-tag', '1');
+      });
+    const byParent = new Map();
+    chips.forEach((chip) => {
+      const parent = chip.parentElement;
+      if (!parent) return;
+      if (!byParent.has(parent)) byParent.set(parent, []);
+      byParent.get(parent).push(chip);
+    });
+    byParent.forEach((list, parent) => {
+      if (!tagSnap.has(parent)) tagSnap.set(parent, Array.from(parent.children));
+      const sorted = list.slice().sort((a, b) => {
+        const ia = picks.indexOf(norm(a.textContent || ''));
+        const ib = picks.indexOf(norm(b.textContent || ''));
+        return (ia < 0 ? picks.length : ia) - (ib < 0 ? picks.length : ib);
+      });
+      for (let i = sorted.length - 1; i >= 0; i--) parent.insertBefore(sorted[i], parent.firstChild);
+    });
   }
 
   function applyHighlight() {
