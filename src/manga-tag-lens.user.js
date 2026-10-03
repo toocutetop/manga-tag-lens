@@ -2,13 +2,15 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.25
+// @version      0.2.26
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  记下要找的标签，在当前页把对上的漫画亮出来。本页没有的标签也会保存，换页后继续对。不分大小写，简体繁体视为同一个。
 // @description:en  Type tags to highlight matching comics on the current page. Case-insensitive, simplified and traditional Chinese match, with AND / OR.
 // @author       you
-// @match        *://*/*
+// @match        *://*.jmcomic.me/*
+// @match        *://jmcomic.me/*
+// @include      /^https?:\/\/([^\/]+\.)?(jmcomic\d*|18comic)\.[a-z0-9-]+/i
 // @require      https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/t2cn.js
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -27,7 +29,11 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.25';
+  if (!/(^|\.)(jmcomic\d*|18comic)\.[a-z0-9-]+$/i.test(location.hostname)
+      && !((location.protocol === 'file:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+        && /标签透镜/.test(document.title || ''))) return;
+
+  const VERSION = '0.2.26';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -72,6 +78,53 @@
       console.warn('[MTL] 选择器非法:', selector, e);
       return [];
     }
+  }
+
+  function isJmcomicHost(host) {
+    return /(^|\.)(jmcomic\d*|18comic)\.[a-z0-9-]+$/i.test(host || location.hostname);
+  }
+
+  function isLocalPreview() {
+    const h = location.hostname;
+    if (!(location.protocol === 'file:' || h === 'localhost' || h === '127.0.0.1')) return false;
+    return /标签透镜/.test(document.title || '');
+  }
+
+  function parseRgb(raw) {
+    if (!raw || raw === 'transparent') return null;
+    const s = String(raw).trim();
+    let m = s.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([.\d]+))?\s*\)$/i);
+    if (!m) m = s.match(/^rgba?\(\s*(\d+)\s+(\d+)\s+(\d+)(?:\s*\/\s*([.\d]+%?))?\s*\)$/i);
+    if (!m) return null;
+    let a = m[4] == null ? 1 : parseFloat(m[4]);
+    if (m[4] && String(m[4]).includes('%')) a /= 100;
+    if (!(a > 0.08)) return null;
+    return { r: +m[1], g: +m[2], b: +m[3] };
+  }
+
+  function luminance(c) {
+    return (0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b) / 255;
+  }
+
+  function bgOf(el) {
+    return el ? parseRgb(getComputedStyle(el).backgroundColor) : null;
+  }
+
+  /** 看页面底色，黑底就把面板换成浅字。先看 body / 主容器，html 常常是默认白，不能先信。 */
+  function pageIsDark() {
+    const body = document.body;
+    const main = document.querySelector('#wrapper, .wrapper, main, .container-fluid');
+    const html = document.documentElement;
+    const primary = bgOf(body) || bgOf(main);
+    if (primary) return luminance(primary) < 0.38;
+    const htmlBg = bgOf(html);
+    if (htmlBg) return luminance(htmlBg) < 0.38;
+    const text = body && parseRgb(getComputedStyle(body).color);
+    if (text && luminance(text) > 0.72) return true;
+    const cls = ((html.className || '') + ' ' + ((body && body.className) || '')).toLowerCase();
+    if (/\b(dark|night|black|theme-dark)\b/.test(cls)) return true;
+    const scheme = getComputedStyle(html).colorScheme || '';
+    return /\bdark\b/.test(scheme) && !/\blight\b/.test(scheme);
   }
 
   /* ============================================================
@@ -249,12 +302,20 @@
    * ============================================================ */
 
   function pickAdapter() {
-    for (let i = 0; i < ADAPTERS.length - 1; i++) {
-      try {
-        if (ADAPTERS[i].test()) return ADAPTERS[i];
-      } catch (e) { /* 单个适配器出错就跳过 */ }
+    if (isJmcomicHost()) {
+      for (let i = 0; i < ADAPTERS.length; i++) {
+        const ad = ADAPTERS[i];
+        if (!ad || ad.id !== 'jmcomic') continue;
+        try {
+          if (ad.test()) return ad;
+        } catch (e) { /* 单个适配器出错就跳过 */ }
+      }
+      return null;
     }
-    return ADAPTERS[ADAPTERS.length - 1];
+    if (isLocalPreview()) {
+      return ADAPTERS.find((ad) => ad && ad.id === 'generic') || null;
+    }
+    return null;
   }
 
   function collect() {
@@ -1577,6 +1638,47 @@
   }
   .empty { color: rgba(28,25,21,.6); font-size: 12px; padding: 8px 2px; }
   .foot { margin: 0; font-size: 11px; color: rgba(22,19,15,.56); line-height: 1.45; }
+
+  /* 页面是黑底时：浅字、深玻璃，白晕改成黑晕。 */
+  .wrap.night { color: #f3efe6; }
+  .wrap.night .plate,
+  .wrap.night .plate.refract { background: rgba(10,12,16,.62); }
+  .wrap.night .lip {
+    background:
+      linear-gradient(155deg, rgba(255,255,255,.14), rgba(255,255,255,0) 18%),
+      linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,0) 12%),
+      linear-gradient(180deg, rgba(255,255,255,0) 52%, rgba(6,8,12,.42) 84%, rgba(6,8,12,.58));
+  }
+  .wrap.night .hd, .wrap.night .body { text-shadow: 0 1px 2px rgba(0,0,0,.72); }
+  .wrap.night .glassable {
+    background-color: rgba(255,255,255,.08);
+    background-image: linear-gradient(180deg, rgba(255,255,255,.16), rgba(255,255,255,.03) 42%, rgba(255,255,255,0) 100%);
+  }
+  .wrap.night .glassable.refract {
+    background-color: rgba(255,255,255,.05);
+  }
+  .wrap.night .seg button.on,
+  .wrap.night .tag.on {
+    background-color: rgba(255,255,255,.16);
+  }
+  .wrap.night .ver, .wrap.night .sum, .wrap.night .hint, .wrap.night .count,
+  .wrap.night .foot, .wrap.night .empty, .wrap.night .tag .n, .wrap.night .tag.on .n {
+    color: rgba(243,239,230,.62);
+  }
+  .wrap.night .name, .wrap.night .hint.note, .wrap.night .count b,
+  .wrap.night .chip, .wrap.night .tag, .wrap.night .jump,
+  .wrap.night .pager button, .wrap.night .clear, .wrap.night .field input,
+  .wrap.night .seg button.on, .wrap.night .tag.on, .wrap.night .tag kbd, .wrap.night .chev {
+    color: #f6f1e8;
+  }
+  .wrap.night .seg button { color: rgba(243,239,230,.78); }
+  .wrap.night .hint.warn { color: #ffc56a; }
+  .wrap.night .field input::placeholder { color: rgba(243,239,230,.4); }
+  .wrap.night .chip button {
+    color: #f6f1e8; background: rgba(255,255,255,.12);
+  }
+  .wrap.night .body { scrollbar-color: rgba(255,255,255,.35) transparent; }
+
   @media (prefers-reduced-transparency: reduce) {
     .plate, .plate.refract {
       background: rgba(250,246,240,.94);
@@ -1591,6 +1693,9 @@
       -webkit-backdrop-filter: none !important;
     }
     .lip { background: none; }
+    .wrap.night .plate, .wrap.night .plate.refract {
+      background: rgba(22, 24, 28, .94);
+    }
   }
   @media (prefers-contrast: more) {
     .wrap { box-shadow: 0 0 0 2px #16130f, 0 22px 50px -16px rgba(22,19,15,.48); }
@@ -1856,6 +1961,8 @@
 
     applyCollapsed();
     applyPanelPos();
+    applyPageTheme();
+    watchPageTheme();
     makeDraggable(ui.panel, wrap.querySelector('.hd'));
     window.addEventListener('resize', applyPanelPos);
   }
@@ -1864,6 +1971,24 @@
     if (!ui.panel) return;
     ui.panel.classList.toggle('collapsed', !!settings.collapsePanel);
     if (ui.chev) ui.chev.textContent = settings.collapsePanel ? '展开' : '收起';
+  }
+
+  function applyPageTheme() {
+    if (!ui.panel) return;
+    ui.panel.classList.toggle('night', pageIsDark());
+  }
+
+  let themeWatch = null;
+  function watchPageTheme() {
+    applyPageTheme();
+    if (themeWatch) return;
+    themeWatch = new MutationObserver(() => applyPageTheme());
+    themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-theme', 'data-bs-theme'] });
+    if (document.body) {
+      themeWatch.observe(document.body, { attributes: true, attributeFilter: ['class', 'style', 'data-theme', 'data-bs-theme'] });
+    }
+    window.addEventListener('load', applyPageTheme);
+    setTimeout(applyPageTheme, 400);
   }
 
   function toggleCollapse() {
@@ -2072,9 +2197,11 @@
   }
 
   function boot(allowEmpty) {
+    if (!isJmcomicHost() && !isLocalPreview()) return true;
     state.adapter = pickAdapter();
+    if (!state.adapter) return true;
     const found = collect();
-    if (!found && !(allowEmpty && state.adapter && state.adapter.id !== 'generic')) {
+    if (!found && !allowEmpty) {
       console.log('[MTL] 当前页面未识别到带标签的漫画条目。适配器：' + state.adapter.name);
       return false;
     }
