@@ -2,7 +2,7 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.24
+// @version      0.2.25
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  记下要找的标签，在当前页把对上的漫画亮出来。本页没有的标签也会保存，换页后继续对。不分大小写，简体繁体视为同一个。
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.24';
+  const VERSION = '0.2.25';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -1599,7 +1599,7 @@
   `;
 
   const PAGE_CSS = `
-  /* 高亮只画在封面内侧。Magic UI Border Beam：一束光沿边走。
+  /* 高亮只画在封面内侧：整圈实边 + Magic UI 那种沿边走的光点。
    * 不要给整格或封面写 padding / margin / width / height / border-radius：
    * 封面是 100% 宽 + 官方 3/4，父级一加内边距就会比旁边没高亮的小一圈。 */
   @property --mtl-beam {
@@ -1611,8 +1611,8 @@
     position: relative !important;
     outline: none !important;
     box-shadow:
-      inset 0 0 0 1.5px rgba(255, 196, 70, .5),
-      inset 0 0 16px rgba(255, 168, 36, .2) !important;
+      inset 0 0 0 2px rgba(255, 184, 40, .92),
+      inset 0 0 14px rgba(255, 150, 20, .22) !important;
   }
   [data-mtl-cover]::after {
     content: '' !important;
@@ -1624,12 +1624,11 @@
     padding: var(--mtl-line, 2.5px) !important;
     background: conic-gradient(
       from var(--mtl-beam),
-      transparent 0 78%,
-      rgba(255, 210, 90, .35) 84%,
-      #ffe7a0 88%,
-      #fff 91%,
-      #ffb020 95%,
-      transparent 100%
+      #ffb420 0 78%,
+      #ffe08a 86%,
+      #fff 90%,
+      #ffcf55 95%,
+      #ffb420 100%
     ) !important;
     -webkit-mask:
       linear-gradient(#000 0 0) content-box,
@@ -1645,20 +1644,19 @@
   [data-mtl-focus="1"] [data-mtl-cover],
   [data-mtl-focus="1"][data-mtl-cover] {
     box-shadow:
-      inset 0 0 0 1.5px rgba(190, 230, 255, .62),
-      inset 0 0 16px rgba(80, 190, 255, .22) !important;
+      inset 0 0 0 2px rgba(120, 210, 255, .95),
+      inset 0 0 14px rgba(60, 170, 240, .28) !important;
     z-index: 4;
   }
   [data-mtl-focus="1"] [data-mtl-cover]::after,
   [data-mtl-focus="1"][data-mtl-cover]::after {
     background: conic-gradient(
       from var(--mtl-beam),
-      transparent 0 78%,
-      rgba(140, 220, 255, .4) 84%,
-      #e8f7ff 88%,
-      #fff 91%,
-      #4ec4ff 95%,
-      transparent 100%
+      #5ec8ff 0 78%,
+      #d8f3ff 86%,
+      #fff 90%,
+      #7ed4ff 95%,
+      #5ec8ff 100%
     ) !important;
   }
   @media (prefers-reduced-motion: reduce) {
