@@ -2,7 +2,7 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.23
+// @version      0.2.24
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  记下要找的标签，在当前页把对上的漫画亮出来。本页没有的标签也会保存，换页后继续对。不分大小写，简体繁体视为同一个。
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.23';
+  const VERSION = '0.2.24';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -1599,30 +1599,70 @@
   `;
 
   const PAGE_CSS = `
-  /* 高亮只画在封面 .thumb-overlay 上。
+  /* 高亮只画在封面内侧。Magic UI Border Beam：一束光沿边走。
    * 不要给整格或封面写 padding / margin / width / height / border-radius：
-   * 封面是 100% 宽 + 官方 3/4，父级一加内边距就会比旁边没高亮的小一圈。
-   * 金色发光圈。两本都亮时 JS 按官方空隙先收发光再收外扩，避免圈和圈叠在一起。 */
+   * 封面是 100% 宽 + 官方 3/4，父级一加内边距就会比旁边没高亮的小一圈。 */
+  @property --mtl-beam {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
   [data-mtl-cover] {
-    outline-width: var(--mtl-line, 2.5px) !important;
-    outline-style: solid !important;
-    outline-color: rgba(255, 208, 74, .98) !important;
-    outline-offset: var(--mtl-off, 2px) !important;
+    position: relative !important;
+    outline: none !important;
     box-shadow:
-      inset 0 1px 0 rgba(255,255,255,.5),
-      0 0 var(--mtl-glow, 8px) 1px rgba(255, 168, 36, .72) !important;
+      inset 0 0 0 1.5px rgba(255, 196, 70, .5),
+      inset 0 0 16px rgba(255, 168, 36, .2) !important;
+  }
+  [data-mtl-cover]::after {
+    content: '' !important;
+    position: absolute !important;
+    inset: 0 !important;
+    z-index: 5 !important;
+    pointer-events: none !important;
+    border-radius: 4px !important;
+    padding: var(--mtl-line, 2.5px) !important;
+    background: conic-gradient(
+      from var(--mtl-beam),
+      transparent 0 78%,
+      rgba(255, 210, 90, .35) 84%,
+      #ffe7a0 88%,
+      #fff 91%,
+      #ffb020 95%,
+      transparent 100%
+    ) !important;
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0) !important;
+    -webkit-mask-composite: xor !important;
+    mask-composite: exclude !important;
+    animation: mtl-beam 2.6s linear infinite !important;
+  }
+  @keyframes mtl-beam {
+    to { --mtl-beam: 360deg; }
   }
   /* 当前看的那一本换成冷色。角标挂在封面上，封面自己是 relative。 */
   [data-mtl-focus="1"] [data-mtl-cover],
   [data-mtl-focus="1"][data-mtl-cover] {
-    outline-color: rgba(255,255,255,.98) !important;
-    outline-style: solid !important;
-    outline-width: var(--mtl-line, 2.5px) !important;
-    outline-offset: var(--mtl-off, 2px) !important;
     box-shadow:
-      inset 0 1px 0 rgba(255,255,255,.68),
-      0 0 var(--mtl-glow, 8px) 1px rgba(80, 190, 255, .7) !important;
+      inset 0 0 0 1.5px rgba(190, 230, 255, .62),
+      inset 0 0 16px rgba(80, 190, 255, .22) !important;
     z-index: 4;
+  }
+  [data-mtl-focus="1"] [data-mtl-cover]::after,
+  [data-mtl-focus="1"][data-mtl-cover]::after {
+    background: conic-gradient(
+      from var(--mtl-beam),
+      transparent 0 78%,
+      rgba(140, 220, 255, .4) 84%,
+      #e8f7ff 88%,
+      #fff 91%,
+      #4ec4ff 95%,
+      transparent 100%
+    ) !important;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    [data-mtl-cover]::after { animation: none !important; --mtl-beam: 210deg; }
   }
   .mtl-focus-badge {
     position: absolute !important;
