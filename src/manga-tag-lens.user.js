@@ -2,7 +2,7 @@
 // @name         Manga Tag Lens · 漫画标签透镜
 // @name:en      Manga Tag Lens
 // @namespace    https://github.com/toocutetop/manga-tag-lens
-// @version      0.2.22
+// @version      0.2.23
 // @updateURL    https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @downloadURL  https://cdn.jsdelivr.net/gh/toocutetop/manga-tag-lens@main/src/manga-tag-lens.user.js
 // @description  记下要找的标签，在当前页把对上的漫画亮出来。本页没有的标签也会保存，换页后继续对。不分大小写，简体繁体视为同一个。
@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.22';
+  const VERSION = '0.2.23';
   const STORE_KEY = 'mtl:settings:v2';
 
   /* ============================================================
@@ -174,6 +174,7 @@
     collapsePanel: false,
     picks: [],
     pickLabels: {},
+    panelPos: null,
   };
 
   function loadSettings() {
@@ -461,24 +462,7 @@
     placeNodes(parent, hits.concat(rest));
   }
 
-  function medianCellWidth(parent) {
-    const base = layoutSnap.get(parent) || [];
-    const widths = base
-      .map((node) => (node.getBoundingClientRect ? node.getBoundingClientRect().width : 0))
-      .filter((w) => w > 40)
-      .sort((a, b) => a - b);
-    if (!widths.length) return 0;
-    return widths[Math.floor(widths.length / 2)];
-  }
-
-  function docBefore(a, b) {
-    if (a === b) return 0;
-    const pos = a.compareDocumentPosition(b);
-    if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
-    if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
-    return 0;
-  }
-
+  /** 只在同一排里把对上的提前。不同排的格子栏数不一样，挪过去封面会被挤小。 */
   function reorderHits() {
     if (!picks.length) {
       restoreOrder();
@@ -493,48 +477,8 @@
     });
     groups.forEach((list, parent) => {
       if (!layoutSnap.has(parent)) layoutSnap.set(parent, Array.from(parent.children));
-    });
-
-    const tracks = [];
-    const grids = [];
-    groups.forEach((list, parent) => {
-      (isTrack(parent) ? tracks : grids).push(parent);
-    });
-    const sized = grids.map((parent) => ({ parent, w: medianCellWidth(parent) })).filter((item) => item.w > 0);
-    const buckets = [];
-    sized.forEach((item) => {
-      const bucket = buckets.find((b) => Math.abs(b.w - item.w) / b.w < 0.12);
-      if (bucket) bucket.items.push(item.parent);
-      else buckets.push({ w: item.w, items: [item.parent] });
-    });
-    buckets.forEach((bucket) => {
-      const list = bucket.items.sort(docBefore);
-      if (list.length < 2) {
-        reorderWithin(list[0]);
-        return;
-      }
-      const dest = list[0];
-      const hits = [];
-      const seen = new Set();
-      list.forEach((parent) => {
-        layoutSnap.get(parent).forEach((node) => {
-          if (seen.has(node)) return;
-          if (state.items.some((it) => it.hit && it.cell === node)) {
-            seen.add(node);
-            hits.push(node);
-          }
-        });
-      });
-      const destRest = layoutSnap.get(dest).filter((node) => !seen.has(node));
-      placeNodes(dest, hits.concat(destRest));
-      list.slice(1).forEach((parent) => {
-        placeNodes(parent, layoutSnap.get(parent).filter((node) => !seen.has(node)));
-      });
-    });
-
-    tracks.forEach((parent) => {
       reorderWithin(parent);
-      settleTrack(parent);
+      if (isTrack(parent)) settleTrack(parent);
     });
   }
 
@@ -1873,7 +1817,9 @@
     });
 
     applyCollapsed();
+    applyPanelPos();
     makeDraggable(ui.panel, wrap.querySelector('.hd'));
+    window.addEventListener('resize', applyPanelPos);
   }
 
   function applyCollapsed() {
@@ -1886,6 +1832,33 @@
     settings.collapsePanel = !settings.collapsePanel;
     saveSettings(settings);
     applyCollapsed();
+  }
+
+  function readPanelPos(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const left = Number(raw.left);
+    const top = Number(raw.top);
+    if (!Number.isFinite(left) || !Number.isFinite(top)) return null;
+    return { left, top };
+  }
+
+  function applyPanelPos() {
+    if (!ui.panel) return;
+    const pos = readPanelPos(settings.panelPos);
+    if (!pos) return;
+    const r = ui.panel.getBoundingClientRect();
+    const w = r.width || 340;
+    const left = Math.min(Math.max(0, pos.left), Math.max(0, window.innerWidth - w));
+    const top = Math.min(Math.max(0, pos.top), Math.max(0, window.innerHeight - 48));
+    ui.panel.style.left = left + 'px';
+    ui.panel.style.top = top + 'px';
+    ui.panel.style.right = 'auto';
+  }
+
+  function persistPanelPos(panel) {
+    const r = panel.getBoundingClientRect();
+    settings.panelPos = { left: Math.round(r.left), top: Math.round(r.top) };
+    saveSettings(settings);
   }
 
   function makeDraggable(panel, handle) {
@@ -1910,7 +1883,11 @@
         panel.style.right = 'auto';
       }
     });
-    window.addEventListener('mouseup', () => { dragging = false; });
+    window.addEventListener('mouseup', () => {
+      if (!dragging) return;
+      dragging = false;
+      if (moved) persistPanelPos(panel);
+    });
     handle.addEventListener('click', () => {
       if (moved) { moved = false; return; }
       toggleCollapse();
