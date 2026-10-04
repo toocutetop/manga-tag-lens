@@ -1,0 +1,20 @@
+# 依赖与构建产物
+node_modules/
+dist/
+build/
+*.lock
+
+# 编辑器
+.vscode/*
+!.vscode/settings.json
+.idea/
+*.swp
+
+# 系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 本地临时文件
+*.local.user.js
+tmp/
